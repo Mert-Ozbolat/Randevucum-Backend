@@ -1,0 +1,344 @@
+{
+  "info": {
+    "name": "Webrezervasyon API",
+    "description": "Multi-tenant reservation system - API test collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" },
+    { "key": "businessId", "value": "" },
+    { "key": "serviceId", "value": "" },
+    { "key": "staffId", "value": "" },
+    { "key": "reservationId", "value": "" },
+    { "key": "customerId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register (Customer)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"customer@test.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+905551234567\",\n  \"role\": \"customer\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/register"
+          }
+        },
+        {
+          "name": "Register (Business Owner)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@salon.com\",\n  \"password\": \"password123\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Owner\",\n  \"phone\": \"+905559876543\",\n  \"role\": \"business_owner\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/register"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.token) {",
+                  "  pm.collectionVariables.set('token', json.data.token);",
+                  "  if (json.data.user) pm.collectionVariables.set('customerId', json.data.user._id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@salon.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business",
+      "item": [
+        {
+          "name": "Create Business",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data._id) pm.collectionVariables.set('businessId', json.data._id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Güzellik Salonu\",\n  \"businessType\": \"hair_salon\",\n  \"address\": {\n    \"street\": \"Örnek Sokak No 1\",\n    \"city\": \"İstanbul\",\n    \"district\": \"Kadıköy\",\n    \"postalCode\": \"34000\"\n  },\n  \"phone\": \"+902161234567\",\n  \"email\": \"info@salon.com\",\n  \"description\": \"Saç ve güzellik hizmetleri\",\n  \"workingHours\": [\n    { \"dayOfWeek\": 1, \"open\": \"09:00\", \"close\": \"18:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 2, \"open\": \"09:00\", \"close\": \"18:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 3, \"open\": \"09:00\", \"close\": \"18:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 4, \"open\": \"09:00\", \"close\": \"18:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 5, \"open\": \"09:00\", \"close\": \"18:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 6, \"open\": \"10:00\", \"close\": \"16:00\", \"isClosed\": false },\n    { \"dayOfWeek\": 0, \"open\": \"00:00\", \"close\": \"00:00\", \"isClosed\": true }\n  ],\n  \"breakTimes\": [\n    { \"start\": \"12:00\", \"end\": \"13:00\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/business"
+          }
+        },
+        {
+          "name": "Get Business",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/business/{{businessId}}"
+          }
+        },
+        {
+          "name": "Update Business",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+902169876543\",\n  \"description\": \"Updated description\"\n}"
+            },
+            "url": "{{baseUrl}}/business/{{businessId}}"
+          }
+        },
+        {
+          "name": "List Businesses (by type)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/business?businessType=hair_salon"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subscription",
+      "item": [
+        {
+          "name": "Subscribe (Activate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessId\": \"{{businessId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/subscription/subscribe"
+          }
+        },
+        {
+          "name": "Get Subscription Status",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/subscription/status/{{businessId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Services",
+      "item": [
+        {
+          "name": "Create Service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data._id) pm.collectionVariables.set('serviceId', json.data._id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessId\": \"{{businessId}}\",\n  \"name\": \"Saç Kesimi\",\n  \"description\": \"Profesyonel saç kesimi\",\n  \"durationMinutes\": 30,\n  \"price\": 150,\n  \"currency\": \"TRY\"\n}"
+            },
+            "url": "{{baseUrl}}/services"
+          }
+        },
+        {
+          "name": "Get Services by Business",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/services/business/{{businessId}}"
+          }
+        },
+        {
+          "name": "Update Service",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"durationMinutes\": 45,\n  \"price\": 175\n}"
+            },
+            "url": "{{baseUrl}}/services/{{serviceId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Staff",
+      "item": [
+        {
+          "name": "Create Staff",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data._id) pm.collectionVariables.set('staffId', json.data._id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessId\": \"{{businessId}}\",\n  \"name\": \"Ayşe Yılmaz\",\n  \"title\": \"Usta Berber\",\n  \"phone\": \"+905551112233\",\n  \"serviceIds\": [\"{{serviceId}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/staff"
+          }
+        },
+        {
+          "name": "Get Staff by Business",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/staff/business/{{businessId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reservations",
+      "item": [
+        {
+          "name": "Get Available Slots",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/reservations/available-slots?businessId={{businessId}}&serviceId={{serviceId}}&date=2025-02-03",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations", "available-slots"],
+              "query": [
+                { "key": "businessId", "value": "{{businessId}}" },
+                { "key": "serviceId", "value": "{{serviceId}}" },
+                { "key": "date", "value": "2025-02-03" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Reservation (Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data._id) pm.collectionVariables.set('reservationId', json.data._id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessId\": \"{{businessId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"date\": \"2025-02-03\",\n  \"time\": \"10:00\",\n  \"notes\": \"İlk randevu\"\n}"
+            },
+            "url": "{{baseUrl}}/reservations"
+          }
+        },
+        {
+          "name": "Get Reservations by Business",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/reservations/business/{{businessId}}"
+          }
+        },
+        {
+          "name": "Get Reservations by Customer",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/reservations/customer/{{customerId}}"
+          }
+        },
+        {
+          "name": "Approve Reservation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"approved\"\n}"
+            },
+            "url": "{{baseUrl}}/reservations/{{reservationId}}/status"
+          }
+        },
+        {
+          "name": "Cancel Reservation",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/reservations/{{reservationId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    }
+  ]
+}
