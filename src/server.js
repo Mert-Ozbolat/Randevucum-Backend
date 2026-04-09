@@ -8,13 +8,13 @@ const app = require('./app');
 
 const PORT = process.env.PORT || 5001;
 
-connectDB()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('Failed to start server:', err);
-    process.exit(1);
-  });
+// Cloud Run expects the container to start listening on $PORT quickly.
+// Start the HTTP server first, then connect to the DB in the background.
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+connectDB().catch((err) => {
+  console.error('MongoDB connection failed:', err?.message || err);
+  // Keep the server running so Cloud Run can route and show logs/health.
+});

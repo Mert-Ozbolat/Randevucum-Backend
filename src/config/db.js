@@ -8,9 +8,12 @@ const connectDB = async () => {
   try {
     const conn = await mongoose.connect(uri);
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    return conn;
   } catch (error) {
     console.error(`Error: ${error.message}`);
-    process.exit(1);
+    // Don't hard-exit here. On Cloud Run we must start listening quickly;
+    // callers can decide whether to retry or terminate.
+    throw error;
   }
 };
 

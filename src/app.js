@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const authRoutes = require('./routes/authRoutes');
 const businessRoutes = require('./routes/businessRoutes');
 const apiCategoryRoutes = require('./routes/apiCategoryRoutes');
@@ -18,7 +19,18 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const readyState = mongoose?.connection?.readyState; // 0=disconnected,1=connected,2=connecting,3=disconnecting
+  const dbConnected = readyState === 1;
+  const status = dbConnected ? 'ok' : 'degraded';
+
+  res.status(dbConnected ? 200 : 503).json({
+    status,
+    timestamp: new Date().toISOString(),
+    db: {
+      connected: dbConnected,
+      readyState,
+    },
+  });
 });
 
 // API routes
