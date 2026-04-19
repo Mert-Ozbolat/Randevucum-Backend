@@ -33,6 +33,8 @@ exports.updateBusinessRules = () => [
   body('workingHours').optional().isArray(),
   body('breakTimes').optional().isArray(),
   body('isActive').optional().isBoolean(),
+  body('description').optional().trim(),
+  body('imageUrl').optional().isString(),
 ];
 
 exports.getBusinessRules = () => [

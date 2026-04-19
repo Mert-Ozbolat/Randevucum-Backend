@@ -12,6 +12,24 @@ const { ROLES } = require('../config/constants');
 
 const router = express.Router();
 
+router.get('/home-slider-ads', businessController.getHomeSliderAds);
+
+router.put(
+  '/:id/home-slider-promo',
+  protect,
+  restrictTo(ROLES.SUPER_ADMIN, ROLES.BUSINESS_OWNER),
+  requireBusinessOwnership,
+  businessController.updateHomeSliderPromo
+);
+
+router.post(
+  '/:id/home-slider-promo/purchase',
+  protect,
+  restrictTo(ROLES.SUPER_ADMIN, ROLES.BUSINESS_OWNER),
+  requireBusinessOwnership,
+  businessController.purchaseHomeSliderPromo
+);
+
 router.post(
   '/',
   protect,

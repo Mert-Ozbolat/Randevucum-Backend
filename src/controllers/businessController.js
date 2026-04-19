@@ -68,6 +68,7 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     'phone',
     'email',
     'description',
+    'imageUrl',
     'workingHours', 'breakTimes', 'isActive',
   ];
   allowed.forEach((key) => {
@@ -125,6 +126,97 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
   return success(res, 200, businesses, 'OK');
+});
+
+/**
+ * GET /business/home-slider-ads — Ücretli ana sayfa slider reklamları (herkese açık)
+ */
+exports.getHomeSliderAds = asyncHandler(async (_req, res) => {
+  const now = new Date();
+  const businesses = await Business.find({
+    isActive: true,
+    'homeSliderPromo.paidUntil': { $gt: now },
+  })
+    .select('name homeSliderPromo')
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  const data = businesses
+    .map((b) => {
+      const promo = b.homeSliderPromo || {};
+      const imageUrl = (promo.imageUrl || '').trim();
+      if (!imageUrl) return null;
+      return {
+        businessId: b._id.toString(),
+        headline: (promo.headline || '').trim() || b.name,
+        subline: (promo.subline || '').trim() || undefined,
+        imageUrl,
+        hrefPath: `/business/${b._id}`,
+      };
+    })
+    .filter(Boolean);
+
+  return success(res, 200, data, 'OK');
+});
+
+/**
+ * PUT /business/:id/home-slider-promo — Sadece süresi olan işletme içerik güncelleyebilir
+ */
+exports.updateHomeSliderPromo = asyncHandler(async (req, res) => {
+  const business = req.business;
+  if (!business) {
+    return error(res, 404, 'Business not found.');
+  }
+  const now = new Date();
+  const paidUntil = business.homeSliderPromo?.paidUntil;
+  if (!paidUntil || paidUntil <= now) {
+    return error(res, 403, 'Ana sayfa reklam süreniz yok veya dolmuş. Önce paketi satın alın.');
+  }
+
+  const { headline, subline, imageUrl } = req.body;
+  if (!business.homeSliderPromo) business.homeSliderPromo = {};
+  if (headline !== undefined) business.homeSliderPromo.headline = String(headline).trim().slice(0, 120);
+  if (subline !== undefined) business.homeSliderPromo.subline = String(subline).trim().slice(0, 200);
+  if (imageUrl !== undefined) {
+    const s = String(imageUrl).trim();
+    /** Base64 ~%33 büyür; ~5MB dosya için güvenli üst sınır */
+    const MAX_SLIDER_IMAGE_CHARS = 12 * 1024 * 1024;
+    if (s.length > MAX_SLIDER_IMAGE_CHARS) {
+      return error(res, 400, 'Görsel verisi çok büyük (maks. yaklaşık 5MB dosya).');
+    }
+    business.homeSliderPromo.imageUrl = s;
+  }
+
+  await business.save();
+  return success(res, 200, business.homeSliderPromo, 'Slider reklamı güncellendi.');
+});
+
+/**
+ * POST /business/:id/home-slider-promo/purchase — Demo: 30 gün slider süresi ekler (üretimde Stripe ile değiştirin)
+ */
+exports.purchaseHomeSliderPromo = asyncHandler(async (req, res) => {
+  const business = req.business;
+  if (!business) {
+    return error(res, 404, 'Business not found.');
+  }
+
+  const days = Math.min(365, Math.max(1, parseInt(req.body.days || '30', 10) || 30));
+  const now = new Date();
+  const currentEnd = business.homeSliderPromo?.paidUntil;
+  const base = currentEnd && currentEnd > now ? currentEnd : now;
+  const paidUntil = new Date(base);
+  paidUntil.setDate(paidUntil.getDate() + days);
+
+  if (!business.homeSliderPromo) business.homeSliderPromo = {};
+  business.homeSliderPromo.paidUntil = paidUntil;
+
+  await business.save();
+  return success(
+    res,
+    200,
+    { paidUntil: business.homeSliderPromo.paidUntil, daysAdded: days },
+    `Ana sayfa slider süresi ${days} gün uzatıldı (demo ödeme).`
+  );
 });
 
 // GET /api/areas

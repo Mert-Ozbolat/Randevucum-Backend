@@ -83,6 +83,22 @@ const businessSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    /** Liste / kart görseli (URL veya data URL) */
+    imageUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    /**
+     * Ana sayfa slider reklamı (ücretli süre: paidUntil).
+     * Sadece paidUntil > şimdi ve imageUrl dolu ise herkese açık slider’da gösterilir.
+     */
+    homeSliderPromo: {
+      headline: { type: String, trim: true, default: '', maxlength: 120 },
+      subline: { type: String, trim: true, default: '', maxlength: 200 },
+      imageUrl: { type: String, trim: true, default: '' },
+      paidUntil: { type: Date, default: null },
+    },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
     isActive: {
