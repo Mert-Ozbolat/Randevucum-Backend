@@ -29,7 +29,7 @@ exports.createBusiness = asyncHandler(async (req, res) => {
     ownerId,
   });
 
-  const trialDays = Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '90', 10) || 90);
+  const trialDays = Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '30', 10) || 30);
   const startDate = new Date();
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + trialDays);

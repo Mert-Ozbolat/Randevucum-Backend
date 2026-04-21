@@ -32,6 +32,12 @@ exports.subscribe = asyncHandler(async (req, res) => {
     endDate,
   });
 
+  // İlk ücretli satın alma işaretlemesi (demo subscribe).
+  if (!business.hasPaidSubscription) {
+    business.hasPaidSubscription = true;
+    await business.save();
+  }
+
   await subscription.populate('businessId', 'name businessType');
   return success(res, 201, subscription, 'Subscription activated successfully.');
 });

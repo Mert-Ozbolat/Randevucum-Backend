@@ -99,6 +99,12 @@ const businessSchema = new mongoose.Schema(
       imageUrl: { type: String, trim: true, default: '' },
       paidUntil: { type: Date, default: null },
     },
+    /** En az 1 kez ücretli abonelik satın alındı mı? (30 gün deneme mantığı için) */
+    hasPaidSubscription: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
     isActive: {
