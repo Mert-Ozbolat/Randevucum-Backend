@@ -10,6 +10,7 @@ const reservationRoutes = require('./routes/reservationRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const statsRoutes = require('./routes/statsRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 const { error } = require('./utils/response');
 
 const app = express();
@@ -44,6 +45,7 @@ app.use('/reservations', reservationRoutes);
 app.use('/subscription', subscriptionRoutes);
 app.use('/reviews', reviewRoutes);
 app.use('/stats', statsRoutes);
+app.use('/upload', uploadRoutes);
 
 // 404
 app.use((req, res) => {
