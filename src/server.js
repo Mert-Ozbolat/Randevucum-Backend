@@ -16,5 +16,5 @@ app.listen(PORT, "0.0.0.0", () => {
 
 // DB bağlantısını arkada başlat
 connectDB().catch((err) => {
-  console.error("❌ MongoDB connection failed:", err?.message || err);
+  console.error("❌ MongoDB connection failed::", err?.message || err);
 });
