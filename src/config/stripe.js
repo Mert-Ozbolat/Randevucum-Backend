@@ -33,6 +33,14 @@ function resolveCheckoutPlans() {
   let n = 0;
   for (const { id, label } of rows) {
     const priceId = (id || '').trim();
+    // Guard: Stripe Checkout line_items expects a Price id (price_...), not Product id (prod_...)
+    if (priceId && !priceId.startsWith('price_')) {
+      console.warn(
+        '[stripe] Ignoring invalid STRIPE_PRICE_* value (expected price_...):',
+        priceId
+      );
+      continue;
+    }
     if (!priceId || seen.has(priceId)) continue;
     seen.add(priceId);
     n += 1;

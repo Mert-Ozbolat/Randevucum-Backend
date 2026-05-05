@@ -182,7 +182,22 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     successUrl,
     cancelUrl,
   });
-  const session = await stripe.checkout.sessions.create(sessionParams);
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create(sessionParams);
+  } catch (e) {
+    const msg = e && typeof e.message === 'string' ? e.message : String(e);
+    console.error('[stripe][checkout-session] stripe error', { reqId, message: msg });
+    // Common misconfig: prod_... (product) instead of price_... (price)
+    if (msg.includes('No such price') || msg.includes('No such plan')) {
+      return error(
+        res,
+        400,
+        `Stripe fiyatı bulunamadı. priceId bir Price olmalı (price_...). Siz prod_... (Product) göndermiş olabilirsiniz. Gönderilen: ${priceId}`
+      );
+    }
+    throw e;
+  }
   console.log('[stripe][checkout-session] created', { reqId, sessionId: session.id, hasUrl: Boolean(session.url) });
 
   return success(res, 200, { url: session.url, sessionId: session.id }, 'OK');
