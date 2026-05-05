@@ -8,14 +8,24 @@ const serviceRoutes = require('./routes/serviceRoutes');
 const staffRoutes = require('./routes/staffRoutes');
 const reservationRoutes = require('./routes/reservationRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const stripeController = require('./controllers/stripeController');
 const { error } = require('./utils/response');
 
 const app = express();
 
 app.use(cors());
+// Stripe webhook must see raw body for signature verification (before express.json)
+app.post(
+  '/payments/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  stripeController.stripeWebhook
+);
+// Backward/Custom public URL: https://api.randevucum.online/webhook
+app.post('/webhook', express.raw({ type: 'application/json' }), stripeController.stripeWebhook);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -43,6 +53,7 @@ app.use('/services', serviceRoutes);
 app.use('/staff', staffRoutes);
 app.use('/reservations', reservationRoutes);
 app.use('/subscription', subscriptionRoutes);
+app.use('/payments', paymentRoutes);
 app.use('/reviews', reviewRoutes);
 app.use('/stats', statsRoutes);
 app.use('/upload', uploadRoutes);

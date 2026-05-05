@@ -50,6 +50,9 @@ router.get(
   reservationController.getReservationsByBusiness
 );
 
+// Staff (linked user): own assigned reservations
+router.get('/staff/mine', protect, reservationController.getMyStaffReservations);
+
 // Customer: list own reservations (or admin)
 router.get(
   '/customer/:customerId',

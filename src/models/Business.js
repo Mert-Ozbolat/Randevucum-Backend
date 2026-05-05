@@ -105,11 +105,25 @@ const businessSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    /** Stripe Customer id (cus_...) for Checkout / portal reuse */
+    stripeCustomerId: { type: String, trim: true },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
     isActive: {
       type: Boolean,
       default: true,
+    },
+    /** Yorumlardan türetilir; syncBusinessReviewStats ile güncellenir */
+    averageRating: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 5,
+    },
+    reviewCount: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   {

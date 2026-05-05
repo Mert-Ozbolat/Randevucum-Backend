@@ -18,6 +18,27 @@ function calculateEndTime(timeStr, durationMinutes) {
 }
 
 /**
+ * Hizmette staffIds doluysa yalnızca bu listedeki aktif personel;
+ * boşsa personelin serviceIds kuralları (boş = tüm hizmetler).
+ */
+function isStaffEligibleForService(staffDoc, serviceDoc) {
+  const sid = serviceDoc._id.toString();
+  const assigned = serviceDoc.staffIds;
+  if (assigned && assigned.length > 0) {
+    return assigned.some((id) => id.toString() === staffDoc._id.toString());
+  }
+  const services = staffDoc.serviceIds || [];
+  if (services.length === 0) return true;
+  return services.some((id) => id.toString() === sid);
+}
+
+async function getEligibleStaffCount(businessId, serviceDoc) {
+  const list = await Staff.find({ businessId, isActive: true }).select('serviceIds').lean();
+  const eligible = list.filter((s) => isStaffEligibleForService({ ...s, _id: s._id }, serviceDoc));
+  return Math.max(1, eligible.length);
+}
+
+/**
  * POST /reservations - Create reservation (Customer or authenticated user)
  * Body: businessId, serviceId, staffId?, date, time, notes?
  * Subscription must be active for the business.
@@ -37,7 +58,8 @@ exports.createReservation = asyncHandler(async (req, res) => {
   const reservationDate = reservationDayToStoredDate(date);
   if (!reservationDate) return error(res, 400, 'Invalid date.');
 
-  // Check for overlapping reservations (same business, same date, overlapping time)
+  const capacity = await getEligibleStaffCount(businessId, service);
+
   const nextDay = nextReservationDayStoredDate(reservationDate);
   const overlapQuery = {
     businessId,
@@ -46,17 +68,35 @@ exports.createReservation = asyncHandler(async (req, res) => {
     time: { $lt: endTime },
     endTime: { $gt: time },
   };
-  if (staffId) overlapQuery.staffId = staffId;
 
-  const overlapping = await Reservation.findOne(overlapQuery);
-  if (overlapping) {
-    return error(res, 409, 'This time slot is already booked.');
+  const overlapping = await Reservation.find(overlapQuery).lean();
+  if (overlapping.length >= capacity) {
+    return error(res, 409, 'This time slot is fully booked.');
+  }
+
+  let resolvedStaffId = staffId || null;
+  if (resolvedStaffId) {
+    const staffMember = await Staff.findOne({
+      _id: resolvedStaffId,
+      businessId,
+      isActive: true,
+    });
+    if (!staffMember) return error(res, 400, 'Invalid staff member.');
+    if (!isStaffEligibleForService(staffMember, service)) {
+      return error(res, 400, 'This staff member does not offer this service.');
+    }
+    const taken = overlapping.some(
+      (r) => r.staffId && r.staffId.toString() === resolvedStaffId.toString()
+    );
+    if (taken) {
+      return error(res, 409, 'This staff member is already booked at this time.');
+    }
   }
 
   const reservation = await Reservation.create({
     businessId,
     serviceId,
-    staffId: staffId || null,
+    staffId: resolvedStaffId,
     customerId,
     date: reservationDate,
     time,
@@ -68,7 +108,7 @@ exports.createReservation = asyncHandler(async (req, res) => {
 
   await reservation.populate([
     { path: 'businessId', select: 'name address phone' },
-    { path: 'serviceId', select: 'name durationMinutes price' },
+    { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
     { path: 'staffId', select: 'name title' },
   ]);
   return success(res, 201, reservation, 'Reservation created successfully.');
@@ -98,21 +138,27 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
     date: { $gte: reservationDate, $lt: nextDay },
     status: { $in: [RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED] },
   };
-  if (staffId) existingQuery.staffId = staffId;
 
   const existingReservations = await Reservation.find(existingQuery).lean();
 
   let staff = null;
   if (staffId) {
     staff = await Staff.findOne({ _id: staffId, businessId, isActive: true });
+    if (!staff) return error(res, 404, 'Staff not found.');
+    if (!isStaffEligibleForService(staff, service)) {
+      return error(res, 400, 'This staff member does not offer this service.');
+    }
   }
+
+  const capacity = await getEligibleStaffCount(businessId, service);
 
   const slots = getAvailableSlots(
     business,
     service.durationMinutes,
     reservationDate,
     existingReservations,
-    staff
+    staff,
+    { capacity, selectedStaffId: staffId || null }
   );
 
   return success(res, 200, { slots, date: reservationDate, service: { name: service.name, durationMinutes: service.durationMinutes } }, 'OK');
@@ -142,11 +188,59 @@ exports.getReservationsByBusiness = asyncHandler(async (req, res) => {
   }
 
   const reservations = await Reservation.find(filter)
-    .populate('serviceId', 'name durationMinutes price')
+    .populate('serviceId', 'name durationMinutes price priceMin priceMax currency')
     .populate('staffId', 'name title')
     .populate('customerId', 'firstName lastName email phone')
     .sort({ date: 1, time: 1 })
     .lean();
+  return success(res, 200, reservations, 'OK');
+});
+
+/**
+ * GET /reservations/staff/mine — Personelin kendi atandığı randevular (yetki + hesap eşleşmesi gerekir)
+ */
+exports.getMyStaffReservations = asyncHandler(async (req, res) => {
+  const staffRows = await Staff.find({
+    userId: req.user._id,
+    isActive: true,
+    canViewOwnReservations: true,
+  }).lean();
+
+  if (!staffRows.length) {
+    return error(
+      res,
+      403,
+      'Randevuları görüntüleme yetkisi yok veya hesabınız personel kaydıyla eşleştirilmemiş.'
+    );
+  }
+
+  const staffIds = staffRows.map((s) => s._id);
+  const { status, dateFrom, dateTo } = req.query;
+
+  const filter = { staffId: { $in: staffIds } };
+  if (status) filter.status = status;
+  if (dateFrom || dateTo) {
+    filter.date = {};
+    if (dateFrom) {
+      const from = reservationDayToStoredDate(dateFrom);
+      if (!from) return error(res, 400, 'Invalid dateFrom.');
+      filter.date.$gte = from;
+    }
+    if (dateTo) {
+      const to = reservationDayToStoredDate(dateTo);
+      if (!to) return error(res, 400, 'Invalid dateTo.');
+      filter.date.$lte = to;
+    }
+  }
+
+  const reservations = await Reservation.find(filter)
+    .populate('businessId', 'name address phone businessType')
+    .populate('serviceId', 'name durationMinutes price priceMin priceMax currency')
+    .populate('staffId', 'name title')
+    .populate('customerId', 'firstName lastName email phone')
+    .sort({ date: 1, time: 1 })
+    .lean();
+
   return success(res, 200, reservations, 'OK');
 });
 
@@ -165,7 +259,7 @@ exports.getReservationsByCustomer = asyncHandler(async (req, res) => {
 
   const reservations = await Reservation.find(filter)
     .populate('businessId', 'name address phone businessType')
-    .populate('serviceId', 'name durationMinutes price')
+    .populate('serviceId', 'name durationMinutes price priceMin priceMax currency')
     .populate('staffId', 'name title')
     .sort({ date: -1, time: -1 })
     .lean();
@@ -207,7 +301,7 @@ exports.updateReservationStatus = asyncHandler(async (req, res) => {
 
   await reservation.save();
   await reservation.populate([
-    { path: 'serviceId', select: 'name durationMinutes' },
+    { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
     { path: 'customerId', select: 'firstName lastName email' },
   ]);
   return success(res, 200, reservation, 'Reservation updated.');
@@ -255,7 +349,24 @@ exports.getReservation = asyncHandler(async (req, res) => {
   const isCustomer = custId === req.user._id.toString();
   const business = await Business.findById(reservation.businessId);
   const isOwner = business && business.ownerId.toString() === req.user._id.toString();
-  if (!isCustomer && !isOwner && req.user.role !== ROLES.SUPER_ADMIN) {
+
+  const staffRows = await Staff.find({
+    userId: req.user._id,
+    isActive: true,
+    canViewOwnReservations: true,
+  })
+    .select('_id')
+    .lean();
+  const allowedStaffIds = new Set(staffRows.map((s) => s._id.toString()));
+  const resStaffId = (reservation.staffId?._id || reservation.staffId)?.toString();
+  const isAssignedStaff = Boolean(resStaffId && allowedStaffIds.has(resStaffId));
+
+  if (
+    !isCustomer &&
+    !isOwner &&
+    req.user.role !== ROLES.SUPER_ADMIN &&
+    !isAssignedStaff
+  ) {
     return error(res, 403, 'You do not have access to this reservation.');
   }
 

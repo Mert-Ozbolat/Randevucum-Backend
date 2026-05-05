@@ -1,5 +1,6 @@
 const Staff = require('../models/Staff');
 const Business = require('../models/Business');
+const User = require('../models/User');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
@@ -21,8 +22,29 @@ exports.createStaff = asyncHandler(async (req, res) => {
   if (!business) return error(res, 404, 'Business not found.');
   if (!canManageStaff(req, business)) return error(res, 403, 'You do not own this business.');
 
-  const staff = await Staff.create({ ...data, businessId: bid });
-  return success(res, 201, staff, 'Staff created successfully.');
+  if (data.email !== undefined && String(data.email).trim() === '') delete data.email;
+  if (data.phone !== undefined && String(data.phone).trim() === '') delete data.phone;
+
+  const { linkUserEmail, ...createData } = data;
+  const staff = await Staff.create({ ...createData, businessId: bid });
+
+  let message = 'Personel kaydedildi.';
+  if (linkUserEmail !== undefined) {
+    const email = String(linkUserEmail).trim().toLowerCase();
+    if (email) {
+      const u = await User.findOne({ email }).select('_id').lean();
+      if (u) {
+        staff.userId = u._id;
+        await staff.save();
+        message = 'Personel kaydedildi; platform hesabı eşleştirildi.';
+      } else {
+        message =
+          'Personel kaydedildi. Bu e-posta ile kayıtlı kullanıcı yok; hesap eşleştirmesi yapılmadı. İşletme panelinden personeli yönetmeye devam edebilir, çalışan kayıt olduktan sonra e-postayı tekrar kaydedebilirsiniz.';
+      }
+    }
+  }
+
+  return success(res, 201, staff, message);
 });
 
 /**
@@ -35,12 +57,58 @@ exports.updateStaff = asyncHandler(async (req, res) => {
   if (!business) return error(res, 404, 'Business not found.');
   if (!canManageStaff(req, business)) return error(res, 403, 'You do not own this business.');
 
-  const allowed = ['name', 'title', 'phone', 'email', 'serviceIds', 'workingHours', 'isActive'];
+  const allowed = [
+    'name',
+    'title',
+    'phone',
+    'email',
+    'imageUrl',
+    'serviceIds',
+    'workingHours',
+    'isActive',
+  ];
   allowed.forEach((key) => {
-    if (req.body[key] !== undefined) staff[key] = req.body[key];
+    if (req.body[key] === undefined) return;
+    if ((key === 'email' || key === 'phone') && String(req.body[key]).trim() === '') {
+      staff[key] = '';
+      return;
+    }
+    staff[key] = req.body[key];
   });
+
+  if (req.body.canViewOwnReservations !== undefined) {
+    staff.canViewOwnReservations = Boolean(req.body.canViewOwnReservations);
+  }
+
+  let message = 'Güncellendi.';
+  if (req.body.linkUserEmail !== undefined) {
+    const raw = String(req.body.linkUserEmail).trim().toLowerCase();
+    if (!raw) {
+      staff.userId = null;
+    } else {
+      const u = await User.findOne({ email: raw }).select('_id').lean();
+      if (u) {
+        staff.userId = u._id;
+      } else {
+        message =
+          'Bu e-posta ile kayıtlı kullanıcı yok; hesap eşleştirmesi değişmedi. Diğer bilgiler kaydedildi. İşletme panelinden tüm personeli yönetmeye devam edebilirsiniz; çalışan kayıt olduktan sonra doğru e-postayı tekrar deneyin.';
+      }
+    }
+  }
+
   await staff.save();
-  return success(res, 200, staff, 'Staff updated successfully.');
+  return success(res, 200, staff, message);
+});
+
+/**
+ * GET /staff/me — Giriş yapan kullanıcının personel kayıtları (çoklu işletme olabilir)
+ */
+exports.getMyStaffProfile = asyncHandler(async (req, res) => {
+  const list = await Staff.find({ userId: req.user._id, isActive: true })
+    .populate('businessId', 'name')
+    .sort({ name: 1 })
+    .lean();
+  return success(res, 200, list, 'OK');
 });
 
 /**
@@ -52,6 +120,21 @@ exports.getStaffByBusiness = asyncHandler(async (req, res) => {
   const filter = { businessId };
   if (onlyActive) filter.isActive = true;
 
-  const staff = await Staff.find(filter).populate('serviceIds', 'name durationMinutes').sort({ name: 1 }).lean();
+  const business = await Business.findById(businessId).select('ownerId').lean();
+  const isOwner =
+    req.user &&
+    business &&
+    (req.user.role === ROLES.SUPER_ADMIN ||
+      business.ownerId.toString() === req.user._id.toString());
+
+  let q = Staff.find(filter)
+    .populate('serviceIds', 'name durationMinutes')
+    .sort({ name: 1 });
+  if (isOwner) {
+    q = q.populate('userId', 'email firstName lastName');
+  } else {
+    q = q.select('-userId -canViewOwnReservations');
+  }
+  const staff = await q.lean();
   return success(res, 200, staff, 'OK');
 });

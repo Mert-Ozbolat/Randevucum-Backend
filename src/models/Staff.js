@@ -30,6 +30,12 @@ const staffSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
     },
+    /** Profil fotoğrafı (ImageKit veya tam URL) */
+    imageUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     serviceIds: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -48,6 +54,11 @@ const staffSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Giriş yapmış hesap (userId) kendi atandığı randevuları görebilsin */
+    canViewOwnReservations: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,
@@ -56,5 +67,6 @@ const staffSchema = new mongoose.Schema(
 
 staffSchema.index({ businessId: 1 });
 staffSchema.index({ businessId: 1, isActive: 1 });
+staffSchema.index({ userId: 1 }, { sparse: true });
 
 module.exports = mongoose.model('Staff', staffSchema);

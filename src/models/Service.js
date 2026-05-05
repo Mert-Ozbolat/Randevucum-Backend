@@ -22,10 +22,22 @@ const serviceSchema = new mongoose.Schema(
       min: [5, 'Duration must be at least 5 minutes'],
       max: [480, 'Duration cannot exceed 8 hours'],
     },
+    /** @deprecated Yeni kayıtlarda priceMin / priceMax kullanın */
     price: {
       type: Number,
-      default: 0,
       min: 0,
+      default: null,
+    },
+    /** Fiyat aralığı alt sınır (TRY vb.) — işlem göre göre değişebileceği için sabit fiyat yerine */
+    priceMin: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+    priceMax: {
+      type: Number,
+      min: 0,
+      default: null,
     },
     currency: {
       type: String,
@@ -36,6 +48,13 @@ const serviceSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Bu hizmeti yapabilecek personel. Boş = personelin kendi serviceIds listesine göre (eski davranış). */
+    staffIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Staff',
+      },
+    ],
   },
   {
     timestamps: true,

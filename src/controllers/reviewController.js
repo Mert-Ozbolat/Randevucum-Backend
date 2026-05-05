@@ -2,6 +2,7 @@ const Review = require('../models/Review');
 const Business = require('../models/Business');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
+const { syncBusinessReviewStats } = require('../utils/reviewStats');
 
 exports.createOrUpdateReview = asyncHandler(async (req, res) => {
   const { businessId, rating, comment } = req.body;
@@ -16,6 +17,8 @@ exports.createOrUpdateReview = asyncHandler(async (req, res) => {
     { $set: { businessId, customerId, rating, comment } },
     { upsert: true, new: true }
   ).lean();
+
+  await syncBusinessReviewStats(businessId);
 
   return success(res, 200, review, 'Review saved.');
 });

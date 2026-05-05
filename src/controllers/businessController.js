@@ -2,6 +2,7 @@ const Business = require('../models/Business');
 const Subscription = require('../models/Subscription');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
+const { syncBusinessReviewStats } = require('../utils/reviewStats');
 const { ROLES, SUBSCRIPTION_STATUS } = require('../config/constants');
 const {
   AREAS,
@@ -88,6 +89,7 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
  * GET /business/:id - Get single business (public or owner)
  */
 exports.getBusiness = asyncHandler(async (req, res) => {
+  await syncBusinessReviewStats(req.params.id);
   const business = await Business.findById(req.params.id)
     .populate('ownerId', 'firstName lastName email');
   if (!business) {

@@ -5,10 +5,13 @@ exports.createStaffRules = () => [
   body('name').trim().notEmpty().withMessage('Staff name is required'),
   body('title').optional().trim(),
   body('phone').optional().trim(),
-  body('email').optional().isEmail().normalizeEmail(),
+  body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
+  body('imageUrl').optional().isString().trim(),
   body('serviceIds').optional().isArray(),
   body('serviceIds.*').optional().isMongoId(),
   body('workingHours').optional().isArray(),
+  body('canViewOwnReservations').optional().isBoolean(),
+  body('linkUserEmail').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
 ];
 
 exports.updateStaffRules = () => [
@@ -16,9 +19,12 @@ exports.updateStaffRules = () => [
   body('name').optional().trim().notEmpty(),
   body('title').optional().trim(),
   body('phone').optional().trim(),
-  body('email').optional().isEmail().normalizeEmail(),
+  body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
+  body('imageUrl').optional().isString().trim(),
   body('serviceIds').optional().isArray(),
   body('isActive').optional().isBoolean(),
+  body('canViewOwnReservations').optional().isBoolean(),
+  body('linkUserEmail').optional().trim(),
 ];
 
 exports.businessIdParamRules = () => [

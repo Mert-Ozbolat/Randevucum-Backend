@@ -77,25 +77,44 @@ function generateSlotsInRange(open, close, durationMinutes, breakTimes, dayOfWee
 }
 
 /**
- * Filter out slots that overlap with existing reservations
- * @param {string[]} slots array of "HH:mm"
- * @param {array} reservations existing reservations for that day (and optionally staff)
- * @param {number} durationMinutes
+ * Whether a reservation overlaps [slotStart, slotStart + duration)
  */
-function excludeBookedSlots(slots, reservations, durationMinutes) {
-  const bookedRanges = reservations.map((r) => ({
-    start: timeToMinutes(r.time),
-    end: timeToMinutes(r.endTime),
-  }));
+function reservationOverlapsSlot(reservation, slotStartStr, durationMinutes) {
+  const slotStart = timeToMinutes(slotStartStr);
+  const slotEnd = slotStart + durationMinutes;
+  const rStart = timeToMinutes(reservation.time);
+  const rEnd = timeToMinutes(reservation.endTime);
+  return slotStart < rEnd && slotEnd > rStart;
+}
+
+/**
+ * Kapasite + isteğe bağlı personel: aynı dilimde en fazla `capacity` randevu;
+ * belirli personel seçiliyse o personelin aynı saatte ikinci randevusu engellenir.
+ */
+function filterSlotsByOccupancy(slots, reservations, durationMinutes, capacity, selectedStaffId) {
+  const cap = Math.max(1, capacity || 1);
+  const sid = selectedStaffId ? String(selectedStaffId) : null;
 
   return slots.filter((slotStr) => {
-    const slotStart = timeToMinutes(slotStr);
-    const slotEnd = slotStart + durationMinutes;
-    const overlaps = bookedRanges.some(
-      (range) => slotStart < range.end && slotEnd > range.start
+    const overlapping = (reservations || []).filter((r) =>
+      reservationOverlapsSlot(r, slotStr, durationMinutes)
     );
-    return !overlaps;
+    if (overlapping.length >= cap) return false;
+    if (sid) {
+      const sameStaffTaken = overlapping.some(
+        (r) => r.staffId && String(r.staffId) === sid
+      );
+      if (sameStaffTaken) return false;
+    }
+    return true;
   });
+}
+
+/**
+ * @deprecated Teklı takvim için — filterSlotsByOccupancy(capacity=1) ile aynı
+ */
+function excludeBookedSlots(slots, reservations, durationMinutes) {
+  return filterSlotsByOccupancy(slots, reservations, durationMinutes, 1, null);
 }
 
 /**
@@ -103,14 +122,22 @@ function excludeBookedSlots(slots, reservations, durationMinutes) {
  * @param {object} business - Business doc with workingHours, breakTimes
  * @param {number} durationMinutes - from service
  * @param {Date} date - the day to get slots for
- * @param {array} existingReservations - reservations for that day (and staff if filtered)
+ * @param {array} existingReservations - o günün tüm randevuları (personel filtresi olmadan)
  * @param {object} staff - optional Staff doc with workingHours override
+ * @param {{ capacity?: number, selectedStaffId?: string|null }} options capacity = eşzamanlı üst sınır
  * @returns {string[]} available slot times "HH:mm"
  */
-function getAvailableSlots(business, durationMinutes, date, existingReservations, staff = null) {
+function getAvailableSlots(
+  business,
+  durationMinutes,
+  date,
+  existingReservations,
+  staff = null,
+  options = {}
+) {
+  const { capacity = 1, selectedStaffId = null } = options;
   const d = new Date(date);
-  // Reservation `date` is stored at UTC noon for a calendar day — use UTC weekday
-  const dayOfWeek = d.getUTCDay(); // 0 = Sunday
+  const dayOfWeek = d.getUTCDay();
 
   const workingHours = staff?.workingHours?.length
     ? staff.workingHours
@@ -128,7 +155,13 @@ function getAvailableSlots(business, durationMinutes, date, existingReservations
     dayOfWeek
   );
 
-  return excludeBookedSlots(allSlots, existingReservations || [], durationMinutes);
+  return filterSlotsByOccupancy(
+    allSlots,
+    existingReservations || [],
+    durationMinutes,
+    capacity,
+    selectedStaffId
+  );
 }
 
 module.exports = {
@@ -138,5 +171,7 @@ module.exports = {
   isInBreak,
   generateSlotsInRange,
   excludeBookedSlots,
+  reservationOverlapsSlot,
+  filterSlotsByOccupancy,
   getAvailableSlots,
 };

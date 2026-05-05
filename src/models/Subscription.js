@@ -26,6 +26,9 @@ const subscriptionSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /** Stripe Billing — set by webhook after successful Checkout */
+    stripeCustomerId: { type: String, trim: true },
+    stripeSubscriptionId: { type: String, trim: true },
   },
   {
     timestamps: true,
@@ -34,6 +37,7 @@ const subscriptionSchema = new mongoose.Schema(
 
 subscriptionSchema.index({ businessId: 1 });
 subscriptionSchema.index({ endDate: 1, status: 1 });
+subscriptionSchema.index({ stripeSubscriptionId: 1 }, { unique: true, sparse: true });
 
 subscriptionSchema.virtual('isActive').get(function () {
   if (this.status !== SUBSCRIPTION_STATUS.ACTIVE) return false;

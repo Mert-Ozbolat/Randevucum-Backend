@@ -1,6 +1,6 @@
 const express = require('express');
 const staffController = require('../controllers/staffController');
-const { protect } = require('../middleware/auth');
+const { protect, optionalAuth } = require('../middleware/auth');
 const {
   createStaffRules,
   updateStaffRules,
@@ -9,6 +9,8 @@ const {
 } = require('../validators/staffValidator');
 
 const router = express.Router();
+
+router.get('/me', protect, staffController.getMyStaffProfile);
 
 router.post(
   '/',
@@ -21,12 +23,14 @@ router.post(
 router.put(
   '/:id',
   protect,
+  updateStaffRules(),
   validate,
   staffController.updateStaff
 );
 
 router.get(
   '/business/:businessId',
+  optionalAuth,
   businessIdParamRules(),
   validate,
   staffController.getStaffByBusiness

@@ -5,8 +5,12 @@ exports.createServiceRules = () => [
   body('name').trim().notEmpty().withMessage('Service name is required'),
   body('durationMinutes').isInt({ min: 5, max: 480 }).withMessage('Duration must be between 5 and 480 minutes'),
   body('description').optional().trim(),
-  body('price').optional().isFloat({ min: 0 }),
+  body('price').optional({ checkFalsy: true }).isFloat({ min: 0 }),
+  body('priceMin').optional({ checkFalsy: true }).isFloat({ min: 0 }),
+  body('priceMax').optional({ checkFalsy: true }).isFloat({ min: 0 }),
   body('currency').optional().trim(),
+  body('staffIds').optional().isArray().withMessage('staffIds must be an array'),
+  body('staffIds.*').optional().isMongoId(),
 ];
 
 exports.updateServiceRules = () => [
@@ -14,8 +18,12 @@ exports.updateServiceRules = () => [
   body('name').optional().trim().notEmpty(),
   body('durationMinutes').optional().isInt({ min: 5, max: 480 }),
   body('description').optional().trim(),
-  body('price').optional().isFloat({ min: 0 }),
+  body('price').optional({ checkFalsy: true }).isFloat({ min: 0 }),
+  body('priceMin').optional({ checkFalsy: true }).isFloat({ min: 0 }),
+  body('priceMax').optional({ checkFalsy: true }).isFloat({ min: 0 }),
   body('isActive').optional().isBoolean(),
+  body('staffIds').optional().isArray().withMessage('staffIds must be an array'),
+  body('staffIds.*').optional().isMongoId(),
 ];
 
 exports.serviceIdParamRules = () => [

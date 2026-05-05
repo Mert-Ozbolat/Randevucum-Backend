@@ -70,6 +70,22 @@ src/
 - `POST /subscription/subscribe` – Activate monthly subscription (body: `businessId`)
 - `GET /subscription/status/:businessId` – Subscription status
 
+### Stripe (payments)
+- `GET /payments/stripe/config` – Auth: business owner; returns `{ checkoutEnabled, publishableKey }`
+- `POST /payments/stripe/checkout-session` – Body: `{ businessId, priceId? }`; returns `{ url }` for hosted Checkout
+- `POST /payments/stripe/webhook` – Raw JSON body; configure `STRIPE_WEBHOOK_SECRET` (Dashboard or `stripe listen`)
+- `POST /webhook` – Same Stripe webhook handler (for `https://api.randevucum.online/webhook`)
+
+**Local webhook test:** Install [Stripe CLI](https://stripe.com/docs/stripe-cli), then:
+
+```bash
+stripe listen --forward-to http://localhost:5001/payments/stripe/webhook
+```
+
+Copy the printed `whsec_...` into `STRIPE_WEBHOOK_SECRET` in `backend/.env`. In Stripe Dashboard create a recurring **Price** and set `STRIPE_PRICE_ID` (or `STRIPE_PRICE_ID_MONTHLY`). Set `FRONTEND_URL` (e.g. `http://localhost:3000`).
+
+**Multiple packages:** One Stripe account = one `sk` + one `pk`. Each product tier is a separate **Price** id (`price_...`). Set `STRIPE_PRICE_ID` + `STRIPE_PRICE_LABEL` and `STRIPE_PRICE_ID_2` + `STRIPE_PRICE_LABEL_2` (optional `STRIPE_PRICE_ID_3`). The subscription UI lists one pay button per plan.
+
 ### Services
 - `POST /services` – Create service (body: businessId, name, durationMinutes, …)
 - `PUT /services/:id` – Update service
