@@ -83,10 +83,32 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const priceId =
     requested && allowed.has(requested) ? requested : fallback;
 
+  // Debug logs (safe): never log STRIPE_SECRET_KEY / webhook secrets.
+  const reqId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  console.log('[stripe][checkout-session] start', {
+    reqId,
+    userId: req.user?._id?.toString?.() || null,
+    role: req.user?.role || null,
+    businessId: req.body?.businessId || null,
+    requestedPriceId: requested || null,
+    resolvedPriceId: priceId || null,
+    allowedPlanCount: plans.length,
+    allowedPriceIds: plans.map((p) => p.priceId),
+    frontendUrlSet: Boolean(process.env.FRONTEND_URL),
+    secretKeySet: Boolean(process.env.STRIPE_SECRET_KEY),
+    webhookSecretSet: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
+  });
+
   if (!stripe) {
+    console.warn('[stripe][checkout-session] stripe client missing', { reqId });
     return error(res, 503, 'Stripe is not configured (STRIPE_SECRET_KEY).');
   }
   if (!priceId || !allowed.has(priceId)) {
+    console.warn('[stripe][checkout-session] invalid priceId', {
+      reqId,
+      requested: requested || '(empty)',
+      allowed: plans.map((p) => p.priceId),
+    });
     return error(
       res,
       400,
@@ -97,15 +119,28 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   }
 
   const { businessId } = req.body;
-  if (!businessId) return error(res, 400, 'businessId is required.');
+  if (!businessId) {
+    console.warn('[stripe][checkout-session] missing businessId', { reqId });
+    return error(res, 400, 'businessId is required.');
+  }
 
   if (req.user.role !== ROLES.BUSINESS_OWNER && req.user.role !== ROLES.SUPER_ADMIN) {
+    console.warn('[stripe][checkout-session] forbidden role', { reqId, role: req.user.role });
     return error(res, 403, 'Only business owners can start subscription checkout.');
   }
 
   const business = await Business.findById(businessId);
-  if (!business) return error(res, 404, 'Business not found.');
+  if (!business) {
+    console.warn('[stripe][checkout-session] business not found', { reqId, businessId });
+    return error(res, 404, 'Business not found.');
+  }
   if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
+    console.warn('[stripe][checkout-session] business ownership mismatch', {
+      reqId,
+      businessId,
+      ownerId: business.ownerId?.toString?.() || null,
+      userId: req.user._id?.toString?.() || null,
+    });
     return error(res, 403, 'You do not own this business.');
   }
 
@@ -138,7 +173,17 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     sessionParams.customer_email = req.user.email;
   }
 
+  console.log('[stripe][checkout-session] creating session', {
+    reqId,
+    mode: sessionParams.mode,
+    lineItems: sessionParams.line_items,
+    customerProvided: Boolean(sessionParams.customer),
+    customerEmailProvided: Boolean(sessionParams.customer_email),
+    successUrl,
+    cancelUrl,
+  });
   const session = await stripe.checkout.sessions.create(sessionParams);
+  console.log('[stripe][checkout-session] created', { reqId, sessionId: session.id, hasUrl: Boolean(session.url) });
 
   return success(res, 200, { url: session.url, sessionId: session.id }, 'OK');
 });
