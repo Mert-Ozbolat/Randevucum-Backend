@@ -90,7 +90,9 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     return error(
       res,
       400,
-      'Geçersiz veya tanımsız paket (priceId). Sunucuda STRIPE_PRICE_ID / STRIPE_PRICE_ID_2 ile tanımlı fiyatlardan birini gönderin.'
+      `Geçersiz veya tanımsız paket (priceId). Gönderilen: ${requested || '(boş)'} | Sunucuda tanımlı paketler: ${plans
+        .map((p) => p.priceId)
+        .join(', ') || '(yok)'}`
     );
   }
 
