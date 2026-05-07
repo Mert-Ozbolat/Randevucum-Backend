@@ -2,6 +2,8 @@ const Reservation = require('../models/Reservation');
 const Business = require('../models/Business');
 const Service = require('../models/Service');
 const Staff = require('../models/Staff');
+const User = require('../models/User');
+const { normalizeE164Tr } = require('../services/whatsapp');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { getAvailableSlots, timeToMinutes, minutesToTime } = require('../utils/slotCalculator');
@@ -44,8 +46,21 @@ async function getEligibleStaffCount(businessId, serviceDoc) {
  * Subscription must be active for the business.
  */
 exports.createReservation = asyncHandler(async (req, res) => {
-  const { businessId, serviceId, staffId, date, time, notes } = req.body;
+  const { businessId, serviceId, staffId, date, time, notes, customerPhone } = req.body;
   const customerId = req.user._id;
+
+  // First reservation: capture phone if user profile has none yet.
+  if ((!req.user.phone || !String(req.user.phone).trim()) && customerPhone) {
+    const phone = String(customerPhone).trim();
+    const e164 = normalizeE164Tr(phone);
+    if (e164) {
+      await User.updateOne({ _id: customerId }, { $set: { phone: e164 } });
+      // keep req.user in sync for this request's downstream usage
+      req.user.phone = e164;
+    } else {
+      return error(res, 400, 'Telefon numarası geçersiz.');
+    }
+  }
 
   const business = await Business.findById(businessId);
   if (!business) return error(res, 404, 'Business not found.');

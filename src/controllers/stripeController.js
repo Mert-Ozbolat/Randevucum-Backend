@@ -8,6 +8,7 @@ const {
   getStripe,
   resolveCheckoutPlans,
   resolveFrontendBaseUrl,
+  resolveProPriceIds,
 } = require('../config/stripe');
 
 function mapStripeSubscriptionStatus(stripeStatus) {
@@ -29,6 +30,13 @@ async function upsertSubscriptionFromStripeSubscription(businessId, sub) {
   const endDate = new Date(sub.current_period_end * 1000);
   const startDate = new Date(sub.current_period_start * 1000);
   const status = mapStripeSubscriptionStatus(sub.status);
+  const firstItem = Array.isArray(sub.items?.data) ? sub.items.data[0] : null;
+  const stripePriceId =
+    firstItem && firstItem.price && (typeof firstItem.price === 'string' ? firstItem.price : firstItem.price.id)
+      ? (typeof firstItem.price === 'string' ? firstItem.price : firstItem.price.id)
+      : null;
+  const proIds = resolveProPriceIds();
+  const planKey = stripePriceId && proIds.includes(stripePriceId) ? 'pro' : 'standard';
 
   await Subscription.findOneAndUpdate(
     { stripeSubscriptionId: sub.id },
@@ -37,6 +45,8 @@ async function upsertSubscriptionFromStripeSubscription(businessId, sub) {
         businessId: new mongoose.Types.ObjectId(businessId),
         stripeSubscriptionId: sub.id,
         stripeCustomerId: customerId,
+        stripePriceId: stripePriceId || undefined,
+        planKey,
         status,
         startDate,
         endDate,

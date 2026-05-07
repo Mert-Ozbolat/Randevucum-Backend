@@ -5,8 +5,17 @@ exports.registerRules = () => [
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('firstName').trim().notEmpty().withMessage('First name is required'),
   body('lastName').trim().notEmpty().withMessage('Last name is required'),
-  body('phone').optional().trim(),
   body('role').optional().isIn(['customer', 'business_owner']).withMessage('Invalid role'),
+  body('phone')
+    .optional()
+    .trim()
+    .custom((value, { req }) => {
+      const role = req.body?.role;
+      if (role === 'business_owner' && (!value || !String(value).trim())) {
+        throw new Error('Telefon işletme hesabı için zorunludur.');
+      }
+      return true;
+    }),
 ];
 
 exports.loginRules = () => [

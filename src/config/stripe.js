@@ -58,9 +58,23 @@ function resolveFrontendBaseUrl() {
   return u;
 }
 
+function resolveProPriceIds() {
+  const ids = [
+    process.env.STRIPE_PRO_PRICE_ID,
+    process.env.STRIPE_PRO_PRICE_IDS,
+    process.env.STRIPE_PRICE_ID_2, // common convention: second plan = Pro
+  ]
+    .filter(Boolean)
+    .flatMap((x) => String(x).split(','))
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return Array.from(new Set(ids));
+}
+
 module.exports = {
   getStripe,
   resolveDefaultPriceId,
   resolveCheckoutPlans,
   resolveFrontendBaseUrl,
+  resolveProPriceIds,
 };

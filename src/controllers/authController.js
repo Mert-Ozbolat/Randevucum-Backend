@@ -38,6 +38,9 @@ exports.register = asyncHandler(async (req, res) => {
 
   const allowedRoles = [ROLES.CUSTOMER, ROLES.BUSINESS_OWNER];
   const finalRole = role && allowedRoles.includes(role) ? role : ROLES.CUSTOMER;
+  if (finalRole === ROLES.BUSINESS_OWNER && (!phone || !String(phone).trim())) {
+    return error(res, 400, 'Telefon işletme hesabı için zorunludur.');
+  }
 
   const user = await User.create({
     email: email.toLowerCase(),

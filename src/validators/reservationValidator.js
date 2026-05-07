@@ -8,6 +8,12 @@ exports.createReservationRules = () => [
   body('date').isISO8601().withMessage('Valid date is required'),
   body('time').matches(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Time must be HH:mm format'),
   body('notes').optional().trim(),
+  body('customerPhone')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 10, max: 32 })
+    .withMessage('Telefon numarası geçersiz'),
 ];
 
 exports.updateStatusRules = () => [

@@ -57,6 +57,14 @@ const reservationSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+    reminders: {
+      /** WhatsApp reminder to customer (end-user) */
+      customerWhatsAppSentAt: { type: Date, default: null },
+      /** WhatsApp reminder to business owner / business phone */
+      businessWhatsAppSentAt: { type: Date, default: null },
+      /** Last error message (debug) */
+      lastError: { type: String, trim: true, default: '' },
+    },
   },
   {
     timestamps: true,
@@ -67,5 +75,6 @@ reservationSchema.index({ businessId: 1, date: 1, time: 1 });
 reservationSchema.index({ customerId: 1 });
 reservationSchema.index({ staffId: 1, date: 1 });
 reservationSchema.index({ businessId: 1, status: 1 });
+reservationSchema.index({ date: 1, time: 1, status: 1 });
 
 module.exports = mongoose.model('Reservation', reservationSchema);

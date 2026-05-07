@@ -29,6 +29,10 @@ const subscriptionSchema = new mongoose.Schema(
     /** Stripe Billing — set by webhook after successful Checkout */
     stripeCustomerId: { type: String, trim: true },
     stripeSubscriptionId: { type: String, trim: true },
+    /** Stripe price id (price_...) for the active subscription item */
+    stripePriceId: { type: String, trim: true },
+    /** Business tier derived from Stripe price id */
+    planKey: { type: String, trim: true, default: 'standard' }, // standard | pro
   },
   {
     timestamps: true,
