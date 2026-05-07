@@ -50,7 +50,12 @@ exports.createReservation = asyncHandler(async (req, res) => {
   const customerId = req.user._id;
 
   // First reservation: capture phone if user profile has none yet.
-  if ((!req.user.phone || !String(req.user.phone).trim()) && customerPhone) {
+  const userHasPhone = Boolean(req.user.phone && String(req.user.phone).trim());
+  if (!userHasPhone && !customerPhone) {
+    return error(res, 400, 'Telefon numarası gerekli.');
+  }
+
+  if (!userHasPhone && customerPhone) {
     const phone = String(customerPhone).trim();
     const e164 = normalizeE164Tr(phone);
     if (e164) {
