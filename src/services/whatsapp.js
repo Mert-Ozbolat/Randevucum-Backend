@@ -13,8 +13,23 @@ function normalizeE164Tr(phoneRaw) {
   return only.length >= 10 ? `+${only}` : null;
 }
 
+/**
+ * WhatsApp delivery channel.
+ * Default is Twilio (`twilio`). Set WHATSAPP_PROVIDER=meta for Meta Cloud API.
+ */
 function getProvider() {
-  return String(process.env.WHATSAPP_PROVIDER || 'meta').trim().toLowerCase(); // meta | twilio
+  return String(process.env.WHATSAPP_PROVIDER || 'twilio').trim().toLowerCase(); // twilio | meta
+}
+
+function isTwilioConfigured() {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_WHATSAPP_FROM;
+  return Boolean(sid && token && from);
+}
+
+function isMetaConfigured() {
+  return Boolean(process.env.WHATSAPP_CLOUD_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
 }
 
 function isEnabled() {
@@ -61,23 +76,38 @@ async function sendViaMetaCloud({ toE164, body, tag }) {
 }
 
 async function sendViaTwilio({ toE164, body, tag }) {
-  // Optional fallback; requires twilio package and envs.
-  // Lazy require so projects can run without Twilio configured.
+  if (!isTwilioConfigured()) {
+    return { ok: false, skipped: true, reason: 'twilio_not_configured' };
+  }
+
   // eslint-disable-next-line global-require, import/no-extraneous-dependencies
   const twilio = require('twilio');
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_WHATSAPP_FROM; // e.g. "whatsapp:+14155238886"
-  if (!sid || !token || !from) return { ok: false, skipped: true, reason: 'twilio_not_configured' };
+  const from = String(process.env.TWILIO_WHATSAPP_FROM || '').trim();
+
   const client = twilio(sid, token);
-  const msg = await client.messages.create({
-    from,
-    to: `whatsapp:${toE164}`,
-    body,
-  });
-  return { ok: true, provider: 'twilio', sid: msg.sid };
+  const to = toE164.startsWith('+') ? `whatsapp:${toE164}` : `whatsapp:+${toE164.replace(/^\+/, '')}`;
+
+  try {
+    const msg = await client.messages.create({
+      from,
+      to,
+      body,
+    });
+    return { ok: true, provider: 'twilio', sid: msg.sid };
+  } catch (e) {
+    const message = e?.message || String(e);
+    const code = e?.code;
+    console.error('[whatsapp][twilio] send failed', { tag, message, code });
+    return { ok: false, reason: 'twilio_send_failed', message, code };
+  }
 }
 
+/**
+ * Send a WhatsApp text message (reminders, etc.).
+ * When WHATSAPP_ENABLED is not true, logs only (dry-run).
+ */
 async function sendWhatsApp({ toPhone, body, tag }) {
   const to = normalizeE164Tr(toPhone);
   if (!to) {
@@ -85,7 +115,7 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   }
 
   const enabled = isEnabled();
-  const provider = getProvider();
+  let provider = getProvider();
 
   if (!enabled) {
     console.log('[whatsapp][dry-run]', {
@@ -98,6 +128,16 @@ async function sendWhatsApp({ toPhone, body, tag }) {
     return { ok: true, dryRun: true };
   }
 
+  // If the chosen provider is not configured, try the other (Meta still supported).
+  if (provider === 'twilio' && !isTwilioConfigured() && isMetaConfigured()) {
+    console.warn('[whatsapp] WHATSAPP_PROVIDER=twilio but Twilio env missing; falling back to Meta.');
+    provider = 'meta';
+  }
+  if (provider === 'meta' && !isMetaConfigured() && isTwilioConfigured()) {
+    console.warn('[whatsapp] WHATSAPP_PROVIDER=meta but Meta env missing; falling back to Twilio.');
+    provider = 'twilio';
+  }
+
   if (provider === 'twilio') {
     return await sendViaTwilio({ toE164: to, body, tag });
   }
@@ -105,4 +145,3 @@ async function sendWhatsApp({ toPhone, body, tag }) {
 }
 
 module.exports = { sendWhatsApp, normalizeE164Tr };
-

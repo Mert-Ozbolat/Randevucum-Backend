@@ -1,4 +1,4 @@
-# Web Rezervasyon API
+# Randevucum API
 
 Multi-tenant reservation system REST API for appointment-based businesses (hair salon, dental clinic, beauty center, restaurant, etc.) built with Express.js and MongoDB.
 

@@ -25,6 +25,15 @@ const createSendToken = (user, statusCode, res) => {
 };
 
 /**
+ * GET /auth/me — current authenticated user (no password)
+ */
+exports.me = asyncHandler(async (req, res) => {
+  const u = req.user?.toObject ? req.user.toObject() : req.user;
+  if (u && u.password) delete u.password;
+  return success(res, 200, u, 'OK');
+});
+
+/**
  * POST /auth/register
  * body: email, password, firstName, lastName, phone?, role?
  */
