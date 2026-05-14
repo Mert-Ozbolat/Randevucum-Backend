@@ -28,6 +28,7 @@ exports.subscribe = asyncHandler(async (req, res) => {
   const subscription = await Subscription.create({
     businessId,
     status: SUBSCRIPTION_STATUS.ACTIVE,
+    planKey: 'standard',
     startDate: now,
     endDate,
   });

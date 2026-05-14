@@ -16,15 +16,18 @@ app.listen(PORT, "0.0.0.0", () => {
 
   // Optional in-process scheduler (not recommended for scale-to-zero/serverless),
   // but useful for single-instance deployments. Prefer Cloud Scheduler calling /jobs/whatsapp-reminders.
-  const enabled = String(process.env.ENABLE_REMINDER_CRON || "").toLowerCase() === "true";
+  // Varsayılan: açık. Kapatmak için .env → ENABLE_REMINDER_CRON=false
+  const enabled = String(process.env.ENABLE_REMINDER_CRON || "true").toLowerCase() === "true";
   if (enabled) {
-    const everyMs = Number(process.env.REMINDER_CRON_EVERY_MS || 60_000);
+    const everyMs = Number(process.env.REMINDER_CRON_EVERY_MS || 5 * 60 * 1000);
     console.log(`[jobs] WhatsApp reminder cron enabled: every ${everyMs}ms`);
-    setInterval(() => {
+    const tick = () => {
       runWhatsAppReminders()
         .then((r) => console.log("[jobs] whatsapp-reminders result", r))
         .catch((e) => console.error("[jobs] whatsapp-reminders error", e?.message || e));
-    }, everyMs);
+    };
+    tick();
+    setInterval(tick, everyMs);
   }
 });
 

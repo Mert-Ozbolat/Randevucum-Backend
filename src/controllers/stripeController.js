@@ -258,6 +258,7 @@ exports.stripeWebhook = async (req, res) => {
         }
         break;
       }
+      case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object;
         let businessId = sub.metadata?.businessId;

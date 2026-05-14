@@ -2,6 +2,7 @@ const Reservation = require('../models/Reservation');
 const Subscription = require('../models/Subscription');
 const Business = require('../models/Business');
 const { sendWhatsApp } = require('../services/whatsapp');
+const { resolveProPriceIds } = require('../config/stripe');
 
 function parseTimeToMinutes(timeStr) {
   const m = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -56,17 +57,26 @@ function toYmd(storedDay) {
 }
 
 async function runWhatsAppReminders({ now = new Date() } = {}) {
-  const minutesBefore = Number(process.env.WHATSAPP_REMINDER_MINUTES_BEFORE || 60);
-  const windowMinutes = Number(process.env.WHATSAPP_REMINDER_WINDOW_MINUTES || 10);
+  // Randevu başlangıcı (şimdi, şimdi + N dakika] aralığındaysa hatırlatma gönderilir (henüz başlamamış).
+  const lookaheadMinutes = Number(
+    process.env.WHATSAPP_REMINDER_LOOKAHEAD_MINUTES ||
+      process.env.WHATSAPP_REMINDER_MINUTES_BEFORE ||
+      60
+  );
+  const nowMs = now.getTime();
+  const horizonMs = nowMs + Math.max(1, lookaheadMinutes) * 60 * 1000;
 
-  const fromMs = now.getTime() + minutesBefore * 60 * 1000;
-  const toMs = fromMs + windowMinutes * 60 * 1000;
+  // Active PRO: planKey === 'pro' OR Stripe price id listed as Pro in env (STRIPE_PRO_PRICE_IDS / STRIPE_PRICE_ID_2 / …)
+  const proPriceIds = resolveProPriceIds();
+  const proMatch = [{ planKey: 'pro' }];
+  if (proPriceIds.length > 0) {
+    proMatch.push({ stripePriceId: { $in: proPriceIds } });
+  }
 
-  // Find active PRO subscriptions
   const proSubs = await Subscription.find({
     status: 'active',
-    planKey: 'pro',
     endDate: { $gte: now },
+    $or: proMatch,
   })
     .select('businessId')
     .lean();
@@ -94,6 +104,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
 
   let sent = 0;
   let skipped = 0;
+  let matchedWindow = 0;
 
   for (const r of candidates) {
     const startAt = appointmentStartUtcFromStoredDay(r.date, r.time);
@@ -102,7 +113,8 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       continue;
     }
     const t = startAt.getTime();
-    if (t < fromMs || t >= toMs) continue;
+    if (t <= nowMs || t > horizonMs) continue;
+    matchedWindow += 1;
 
     const business = r.businessId;
     const customer = r.customerId;
@@ -173,7 +185,17 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     }
   }
 
-  return { ok: true, scanned: candidates.length, sent, skipped, window: { minutesBefore, windowMinutes } };
+  return {
+    ok: true,
+    scanned: candidates.length,
+    matchedWindow,
+    sent,
+    skipped,
+    rule: {
+      lookaheadMinutes,
+      description: 'Randevu başlangıcı şimdi ile şimdi+lookahead arasındaysa bildirim (yalnızca henüz gönderilmemişse).',
+    },
+  };
 }
 
 module.exports = { runWhatsAppReminders };
