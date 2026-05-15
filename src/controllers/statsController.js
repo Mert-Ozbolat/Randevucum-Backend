@@ -20,38 +20,13 @@ function todayStoredRange() {
   return { start, end };
 }
 
-function timeToMinutes(t) {
-  const parts = String(t || '').split(':');
-  if (parts.length < 2) return NaN;
-  const h = Number(parts[0]);
-  const m = Number(parts[1]);
-  if (Number.isNaN(h) || Number.isNaN(m)) return NaN;
-  return h * 60 + m;
-}
-
-/**
- * Şu an çalışma saatleri içinde mi (sunucu yerel saati, dayOfWeek: 0=Pazar).
- */
-function isBusinessOpenNow(workingHours, now = new Date()) {
-  if (!Array.isArray(workingHours) || workingHours.length === 0) return false;
-  const dow = now.getDay();
-  const dayCfg = workingHours.find((w) => w.dayOfWeek === dow);
-  if (!dayCfg || dayCfg.isClosed) return false;
-  const openM = timeToMinutes(dayCfg.open);
-  const closeM = timeToMinutes(dayCfg.close);
-  if (Number.isNaN(openM) || Number.isNaN(closeM)) return false;
-  if (closeM < openM) return false; // gece vardiyası — MVP’de sayma
-  const cur = now.getHours() * 60 + now.getMinutes();
-  return cur >= openM && cur <= closeM;
-}
-
 /**
  * GET /stats/home
  */
 exports.getHomeStats = asyncHandler(async (_req, res) => {
   const since = new Date(Date.now() - ACTIVE_MINUTES * 60 * 1000);
 
-  const [activeUsers, todayReservations, businesses] = await Promise.all([
+  const [activeUsers, todayReservations, registeredBusinesses] = await Promise.all([
     Presence.countDocuments({ lastPing: { $gte: since } }),
     (async () => {
       const { start, end } = todayStoredRange();
@@ -61,10 +36,8 @@ exports.getHomeStats = asyncHandler(async (_req, res) => {
         status: { $ne: RESERVATION_STATUS.CANCELED },
       });
     })(),
-    Business.find({ isActive: true }).select('workingHours').lean(),
+    Business.countDocuments({ isActive: { $ne: false } }),
   ]);
-
-  const openBusinesses = businesses.filter((b) => isBusinessOpenNow(b.workingHours)).length;
 
   return success(
     res,
@@ -72,7 +45,7 @@ exports.getHomeStats = asyncHandler(async (_req, res) => {
     {
       activeUsers,
       todayReservations,
-      openBusinesses,
+      registeredBusinesses,
       activeWindowMinutes: ACTIVE_MINUTES,
       updatedAt: new Date().toISOString(),
     },
