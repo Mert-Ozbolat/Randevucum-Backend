@@ -3,7 +3,7 @@ const Business = require('../models/Business');
 const Service = require('../models/Service');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
-const { normalizeE164Tr } = require('../services/whatsapp');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { getAvailableSlots, timeToMinutes, minutesToTime } = require('../utils/slotCalculator');
@@ -57,7 +57,7 @@ exports.createReservation = asyncHandler(async (req, res) => {
 
   if (!userHasPhone && customerPhone) {
     const phone = String(customerPhone).trim();
-    const e164 = normalizeE164Tr(phone);
+    const e164 = normalizePhoneForDatabase(phone);
     if (e164) {
       await User.updateOne({ _id: customerId }, { $set: { phone: e164 } });
       // keep req.user in sync for this request's downstream usage

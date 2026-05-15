@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { BUSINESS_TYPES } = require('../config/constants');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 
 const workingHoursSchema = new mongoose.Schema(
   {
@@ -142,5 +143,18 @@ businessSchema.index({ profession: 1 });
 businessSchema.index({ 'location.lat': 1 });
 businessSchema.index({ 'location.lng': 1 });
 businessSchema.index({ isActive: 1 });
+
+businessSchema.pre('save', function (next) {
+  if (!this.isModified('phone')) return next();
+  const trimmed = String(this.phone ?? '').trim();
+  if (!trimmed) {
+    this.phone = undefined;
+    return next();
+  }
+  const e164 = normalizePhoneForDatabase(trimmed);
+  if (!e164) return next(new Error('Geçersiz telefon numarası.'));
+  this.phone = e164;
+  next();
+});
 
 module.exports = mongoose.model('Business', businessSchema);

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const { ROLES } = require('../config/constants');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 
 const userSchema = new mongoose.Schema(
   {
@@ -60,6 +61,18 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.pre('save', async function (next) {
+  if (this.isModified('phone')) {
+    const trimmed = String(this.phone ?? '').trim();
+    if (!trimmed) {
+      this.phone = undefined;
+    } else {
+      const e164 = normalizePhoneForDatabase(trimmed);
+      if (!e164) {
+        return next(new Error('Geçersiz telefon numarası.'));
+      }
+      this.phone = e164;
+    }
+  }
   if (!this.isModified('password') || !this.password) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();

@@ -1,17 +1,4 @@
-function normalizeE164Tr(phoneRaw) {
-  const raw = String(phoneRaw || '').trim();
-  if (!raw) return null;
-  // Very small normalizer for Turkey numbers:
-  // - accepts +90..., 90..., 0..., or 5xxxxxxxxx
-  const digits = raw.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  const only = digits.replace(/[^\d]/g, '');
-  if (only.startsWith('90') && only.length >= 12) return `+${only}`;
-  if (only.startsWith('0') && only.length >= 11) return `+9${only}`; // 0XXXXXXXXXX -> +90XXXXXXXXXX
-  if (only.length === 10 && only.startsWith('5')) return `+90${only}`; // 5XXXXXXXXX -> +905XXXXXXXXX
-  if (only.length === 11 && only.startsWith('5')) return `+90${only}`; // 5XXXXXXXXXX (rare)
-  return only.length >= 10 ? `+${only}` : null;
-}
+const { normalizeE164Tr } = require('../utils/phone');
 
 /**
  * WhatsApp delivery channel.

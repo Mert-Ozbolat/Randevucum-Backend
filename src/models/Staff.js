@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 
 const staffSchema = new mongoose.Schema(
   {
@@ -68,5 +69,18 @@ const staffSchema = new mongoose.Schema(
 staffSchema.index({ businessId: 1 });
 staffSchema.index({ businessId: 1, isActive: 1 });
 staffSchema.index({ userId: 1 }, { sparse: true });
+
+staffSchema.pre('save', function (next) {
+  if (!this.isModified('phone')) return next();
+  const trimmed = String(this.phone ?? '').trim();
+  if (!trimmed) {
+    this.phone = '';
+    return next();
+  }
+  const e164 = normalizePhoneForDatabase(trimmed);
+  if (!e164) return next(new Error('Geçersiz telefon numarası.'));
+  this.phone = e164;
+  next();
+});
 
 module.exports = mongoose.model('Staff', staffSchema);

@@ -4,7 +4,7 @@ const User = require('../models/User');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
-const { normalizeE164Tr } = require('../services/whatsapp');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 
 function getGoogleClient() {
   const id = process.env.GOOGLE_CLIENT_ID;
@@ -52,7 +52,7 @@ exports.updateProfile = asyncHandler(async (req, res) => {
     if (!trimmed) {
       user.phone = undefined;
     } else {
-      const e164 = normalizeE164Tr(trimmed);
+      const e164 = normalizePhoneForDatabase(trimmed);
       if (!e164) {
         return error(res, 400, 'Geçersiz telefon numarası.');
       }
@@ -90,7 +90,14 @@ exports.register = asyncHandler(async (req, res) => {
 
   const allowedRoles = [ROLES.CUSTOMER, ROLES.BUSINESS_OWNER];
   const finalRole = role && allowedRoles.includes(role) ? role : ROLES.CUSTOMER;
-  if (finalRole === ROLES.BUSINESS_OWNER && (!phone || !String(phone).trim())) {
+  let phoneE164;
+  if (phone && String(phone).trim()) {
+    phoneE164 = normalizePhoneForDatabase(phone);
+    if (!phoneE164) {
+      return error(res, 400, 'Geçersiz telefon numarası.');
+    }
+  }
+  if (finalRole === ROLES.BUSINESS_OWNER && !phoneE164) {
     return error(res, 400, 'Telefon işletme hesabı için zorunludur.');
   }
 
@@ -99,7 +106,7 @@ exports.register = asyncHandler(async (req, res) => {
     password,
     firstName,
     lastName,
-    phone: phone || undefined,
+    phone: phoneE164,
     role: finalRole,
   });
 
@@ -205,12 +212,23 @@ exports.googleAuth = asyncHandler(async (req, res) => {
   const firstName = (bodyFirst || fromGoogleFirst || email.split('@')[0] || 'User').trim() || 'User';
   const lastName = (bodyLast || fromGoogleLast || '-').trim() || '-';
 
+  let phoneE164;
+  if (phone && String(phone).trim()) {
+    phoneE164 = normalizePhoneForDatabase(phone);
+    if (!phoneE164) {
+      return error(res, 400, 'Geçersiz telefon numarası.');
+    }
+  }
+  if (accountType === ROLES.BUSINESS_OWNER && !phoneE164) {
+    return error(res, 400, 'Telefon işletme hesabı için zorunludur.');
+  }
+
   const newUser = await User.create({
     email,
     googleId,
     firstName: firstName.slice(0, 80),
     lastName: lastName.slice(0, 80),
-    phone: phone || undefined,
+    phone: phoneE164,
     role: accountType,
   });
 
