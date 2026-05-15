@@ -105,6 +105,8 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   let sent = 0;
   let skipped = 0;
   let matchedWindow = 0;
+  /** Postman/teşhis: son gönderim denemeleri (telefon numarası yok) */
+  const sendAttempts = [];
 
   for (const r of candidates) {
     const startAt = appointmentStartUtcFromStoredDay(r.date, r.time);
@@ -139,6 +141,15 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         body: msg,
         tag: `reservation:${r._id}:customer`,
       });
+      sendAttempts.push({
+        reservationId: String(r._id),
+        channel: 'customer',
+        ok: Boolean(res.ok),
+        reason: res.reason || null,
+        message: res.message ? String(res.message).slice(0, 200) : null,
+        dryRun: Boolean(res.dryRun),
+        hasPhone: Boolean(customerPhone && String(customerPhone).trim()),
+      });
       if (res.ok) {
         updates['reminders.customerWhatsAppSentAt'] = new Date();
         sent += 1;
@@ -172,6 +183,15 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         body: msg,
         tag: `reservation:${r._id}:business`,
       });
+      sendAttempts.push({
+        reservationId: String(r._id),
+        channel: 'business',
+        ok: Boolean(res.ok),
+        reason: res.reason || null,
+        message: res.message ? String(res.message).slice(0, 200) : null,
+        dryRun: Boolean(res.dryRun),
+        hasPhone: Boolean(businessPhone && String(businessPhone).trim()),
+      });
       if (res.ok) {
         updates['reminders.businessWhatsAppSentAt'] = new Date();
         sent += 1;
@@ -191,6 +211,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     matchedWindow,
     sent,
     skipped,
+    sendAttempts,
     rule: {
       lookaheadMinutes,
       description: 'Randevu başlangıcı şimdi ile şimdi+lookahead arasındaysa bildirim (yalnızca henüz gönderilmemişse).',

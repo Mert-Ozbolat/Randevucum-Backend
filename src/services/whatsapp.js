@@ -89,6 +89,18 @@ async function sendViaTwilio({ toE164, body, tag }) {
   const client = twilio(sid, token);
   const to = toE164.startsWith('+') ? `whatsapp:${toE164}` : `whatsapp:+${toE164.replace(/^\+/, '')}`;
 
+  const fromBare = from.replace(/^whatsapp:/i, '').trim();
+  const fromE164 = normalizeE164Tr(fromBare);
+  if (fromE164 && fromE164 === toE164) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'twilio_same_to_from',
+      message:
+        'Twilio: Gönderen (TWILIO_WHATSAPP_FROM) ile alıcı numara aynı olamaz. FROM alanı Twilio konsolundaki WhatsApp sandbox / onaylı gönderen olmalı (genelde +1...), alıcı ise müşteri veya işletme hattı (+90...) olmalı.',
+    };
+  }
+
   try {
     const msg = await client.messages.create({
       from,
@@ -100,6 +112,15 @@ async function sendViaTwilio({ toE164, body, tag }) {
     const message = e?.message || String(e);
     const code = e?.code;
     console.error('[whatsapp][twilio] send failed', { tag, message, code });
+    if (/could not find a channel with the specified from address/i.test(message)) {
+      return {
+        ok: false,
+        reason: 'twilio_invalid_from',
+        message:
+          'Twilio: TWILIO_WHATSAPP_FROM bu hesapta WhatsApp gönderen olarak tanımlı değil. Twilio Console → Messaging → WhatsApp sandbox’taki tam "From" değerini kopyala (örn. whatsapp:+14155238886). Kendi +90 hattını FROM yapma.',
+        code,
+      };
+    }
     return { ok: false, reason: 'twilio_send_failed', message, code };
   }
 }

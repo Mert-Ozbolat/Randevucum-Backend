@@ -11,6 +11,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const jobRoutes = require('./routes/jobRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
+const favoriteRoutes = require('./routes/favoriteRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const stripeController = require('./controllers/stripeController');
@@ -57,6 +58,7 @@ app.use('/subscription', subscriptionRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/jobs', jobRoutes);
 app.use('/reviews', reviewRoutes);
+app.use('/favorites', favoriteRoutes);
 app.use('/stats', statsRoutes);
 app.use('/upload', uploadRoutes);
 
