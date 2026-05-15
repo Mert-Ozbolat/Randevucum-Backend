@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
+const { normalizeE164Tr } = require('../services/whatsapp');
 
 function getGoogleClient() {
   const id = process.env.GOOGLE_CLIENT_ID;
@@ -31,6 +32,48 @@ exports.me = asyncHandler(async (req, res) => {
   const u = req.user?.toObject ? req.user.toObject() : req.user;
   if (u && u.password) delete u.password;
   return success(res, 200, u, 'OK');
+});
+
+/**
+ * PATCH /auth/me — Profil güncelle (ad, soyad, telefon, avatar)
+ */
+exports.updateProfile = asyncHandler(async (req, res) => {
+  const user = req.user;
+  const { firstName, lastName, phone, avatarUrl } = req.body;
+
+  if (firstName !== undefined) {
+    user.firstName = String(firstName).trim().slice(0, 80);
+  }
+  if (lastName !== undefined) {
+    user.lastName = String(lastName).trim().slice(0, 80);
+  }
+  if (phone !== undefined) {
+    const trimmed = String(phone).trim();
+    if (!trimmed) {
+      user.phone = undefined;
+    } else {
+      const e164 = normalizeE164Tr(trimmed);
+      if (!e164) {
+        return error(res, 400, 'Geçersiz telefon numarası.');
+      }
+      user.phone = e164;
+    }
+  }
+  if (avatarUrl !== undefined) {
+    const url = String(avatarUrl).trim();
+    if (!url) {
+      user.avatarUrl = '';
+    } else if (!/^https?:\/\//i.test(url)) {
+      return error(res, 400, 'Profil resmi geçerli bir https adresi olmalıdır.');
+    } else {
+      user.avatarUrl = url.slice(0, 2048);
+    }
+  }
+
+  await user.save();
+  const u = user.toObject();
+  delete u.password;
+  return success(res, 200, u, 'Profil güncellendi.');
 });
 
 /**

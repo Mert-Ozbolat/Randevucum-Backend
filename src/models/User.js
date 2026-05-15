@@ -36,6 +36,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    /** Profil fotoğrafı (ImageKit veya HTTPS URL) */
+    avatarUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     role: {
       type: String,
       enum: Object.values(ROLES),

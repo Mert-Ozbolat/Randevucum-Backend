@@ -31,6 +31,13 @@ exports.googleAuthRules = () => [
   body('phone').optional().trim(),
 ];
 
+exports.updateProfileRules = () => [
+  body('firstName').optional().trim().isLength({ min: 1, max: 80 }).withMessage('Ad geçersiz.'),
+  body('lastName').optional().trim().isLength({ min: 1, max: 80 }).withMessage('Soyad geçersiz.'),
+  body('phone').optional({ values: 'null' }).trim(),
+  body('avatarUrl').optional({ values: 'null' }).trim().isLength({ max: 2048 }).withMessage('Profil resmi URL çok uzun.'),
+];
+
 exports.validate = (req, res, next) => {
   const errors = validationResult(req);
   if (errors.isEmpty()) return next();
