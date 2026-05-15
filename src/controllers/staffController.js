@@ -5,6 +5,7 @@ const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
 const { getStaffQuota } = require('../utils/subscriptionLimits');
+const { syncBusinessPublicActivation } = require('../utils/businessSetup');
 
 const canManageStaff = (req, business) => {
   if (req.user.role === ROLES.SUPER_ADMIN) return true;
@@ -58,6 +59,7 @@ exports.createStaff = asyncHandler(async (req, res) => {
     }
   }
 
+  await syncBusinessPublicActivation(bid);
   return success(res, 201, staff, message);
 });
 
@@ -111,6 +113,7 @@ exports.updateStaff = asyncHandler(async (req, res) => {
   }
 
   await staff.save();
+  await syncBusinessPublicActivation(staff.businessId);
   return success(res, 200, staff, message);
 });
 

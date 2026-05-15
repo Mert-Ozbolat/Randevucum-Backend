@@ -70,6 +70,9 @@ exports.createReservation = asyncHandler(async (req, res) => {
 
   const business = await Business.findById(businessId);
   if (!business) return error(res, 404, 'Business not found.');
+  if (!business.isActive) {
+    return error(res, 403, 'Bu işletme henüz randevu almaya açık değil.');
+  }
   const service = await Service.findOne({ _id: serviceId, businessId, isActive: true });
   if (!service) return error(res, 404, 'Service not found.');
 

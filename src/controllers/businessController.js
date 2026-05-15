@@ -9,6 +9,7 @@ const {
   PROFESSIONS_BY_AREA,
   PROFESSION_TO_BUSINESS_TYPE,
 } = require('../config/areaProfessionData');
+const { loadSetupContext, syncBusinessPublicActivation } = require('../utils/businessSetup');
 
 /**
  * POST /business - Create business (BusinessOwner only)
@@ -28,6 +29,7 @@ exports.createBusiness = asyncHandler(async (req, res) => {
   const business = await Business.create({
     ...req.body,
     ownerId,
+    isActive: false,
   });
 
   const trialDays = Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '30', 10) || 30);
@@ -71,8 +73,11 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     'email',
     'description',
     'imageUrl',
-    'workingHours', 'breakTimes', 'isActive',
+    'workingHours', 'breakTimes',
   ];
+  if (req.user.role === ROLES.SUPER_ADMIN && req.body.isActive !== undefined) {
+    allowed.push('isActive');
+  }
   allowed.forEach((key) => {
     if (req.body[key] !== undefined) business[key] = req.body[key];
   });
@@ -83,7 +88,16 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
   }
 
   await business.save();
-  return success(res, 200, business, 'Business updated successfully.');
+  const activation = await syncBusinessPublicActivation(business._id);
+  const payload = business.toObject ? business.toObject() : business;
+  return success(
+    res,
+    200,
+    { ...payload, setup: activation },
+    activation?.isActive
+      ? 'İşletme güncellendi ve müşterilere açıldı.'
+      : 'İşletme güncellendi. Yayına almak için kurulum adımlarını tamamlayın.'
+  );
 });
 
 /**
@@ -96,7 +110,63 @@ exports.getBusiness = asyncHandler(async (req, res) => {
   if (!business) {
     return error(res, 404, 'Business not found.');
   }
+  const isOwner =
+    req.user &&
+    (req.user.role === ROLES.SUPER_ADMIN ||
+      business.ownerId._id?.toString() === req.user._id.toString() ||
+      business.ownerId.toString() === req.user._id.toString());
+  if (!business.isActive && !isOwner) {
+    return error(res, 404, 'İşletme henüz yayında değil.');
+  }
   return success(res, 200, business, 'OK');
+});
+
+/**
+ * GET /business/setup-status — İşletme sahibi kurulum + yayın durumu
+ */
+exports.getSetupStatus = asyncHandler(async (req, res) => {
+  if (req.user.role !== ROLES.BUSINESS_OWNER && req.user.role !== ROLES.SUPER_ADMIN) {
+    return error(res, 403, 'Forbidden.');
+  }
+  const filter =
+    req.user.role === ROLES.SUPER_ADMIN && req.query.businessId
+      ? { _id: req.query.businessId }
+      : { ownerId: req.user._id };
+  const business = await Business.findOne(filter).sort({ createdAt: -1 }).lean();
+  if (!business) {
+    return success(
+      res,
+      200,
+      {
+        hasBusiness: false,
+        isActive: false,
+        setupComplete: false,
+        percent: 0,
+        completed: 0,
+        total: 4,
+        steps: { profile: false, services: false, staff: false, hours: false },
+      },
+      'OK'
+    );
+  }
+  const ctx = await loadSetupContext(business._id);
+  await syncBusinessPublicActivation(business._id);
+  const refreshed = await Business.findById(business._id).select('isActive').lean();
+  return success(
+    res,
+    200,
+    {
+      hasBusiness: true,
+      businessId: String(business._id),
+      isActive: Boolean(refreshed?.isActive),
+      setupComplete: ctx.setup.isComplete,
+      percent: ctx.setup.percent,
+      completed: ctx.setup.completed,
+      total: ctx.setup.total,
+      steps: ctx.setup.steps,
+    },
+    'OK'
+  );
 });
 
 /**
@@ -118,10 +188,14 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
   if (and.length) filter.$and = and;
 
   if (ownerId) filter.ownerId = ownerId;
-  if (isActive !== undefined) filter.isActive = isActive === 'true';
-
-  if (req.user?.role === ROLES.BUSINESS_OWNER && req.user.role !== ROLES.SUPER_ADMIN) {
+  const isOwnerListingOwn =
+    req.user?.role === ROLES.BUSINESS_OWNER || req.user?.role === ROLES.SUPER_ADMIN;
+  if (isOwnerListingOwn && req.user?.role === ROLES.BUSINESS_OWNER) {
     filter.ownerId = req.user._id;
+  } else if (isActive !== undefined) {
+    filter.isActive = isActive === 'true';
+  } else if (!isOwnerListingOwn) {
+    filter.isActive = true;
   }
 
   const businesses = await Business.find(filter)
@@ -249,10 +323,14 @@ exports.listBusinessesByAreaProfession = asyncHandler(async (req, res) => {
     and.push({ $or: [{ profession }, { subCategory: profession }] });
   }
   if (and.length) filter.$and = and;
-  if (isActive !== undefined) filter.isActive = isActive === 'true';
-
-  if (req.user?.role === ROLES.BUSINESS_OWNER && req.user.role !== ROLES.SUPER_ADMIN) {
+  const isOwnerListingOwn =
+    req.user?.role === ROLES.BUSINESS_OWNER || req.user?.role === ROLES.SUPER_ADMIN;
+  if (isOwnerListingOwn && req.user?.role === ROLES.BUSINESS_OWNER) {
     filter.ownerId = req.user._id;
+  } else if (isActive !== undefined) {
+    filter.isActive = isActive === 'true';
+  } else if (!isOwnerListingOwn) {
+    filter.isActive = true;
   }
 
   const businesses = await Business.find(filter)

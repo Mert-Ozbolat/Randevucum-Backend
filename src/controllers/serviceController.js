@@ -5,6 +5,7 @@ const Staff = require('../models/Staff');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
+const { syncBusinessPublicActivation } = require('../utils/businessSetup');
 
 /** İşletmeye ait aktif personel ID'leri; geçersiz veya başka işletme → null */
 async function validateStaffIdsForBusiness(businessId, staffIdsInput) {
@@ -55,6 +56,7 @@ exports.createService = asyncHandler(async (req, res) => {
   }
 
   const service = await Service.create({ ...data, businessId: bid, staffIds });
+  await syncBusinessPublicActivation(bid);
   return success(res, 201, service, 'Service created successfully.');
 });
 
@@ -102,6 +104,7 @@ exports.updateService = asyncHandler(async (req, res) => {
     service.price = null;
   }
   await service.save();
+  await syncBusinessPublicActivation(service.businessId?._id || service.businessId);
   return success(res, 200, service, 'Service updated successfully.');
 });
 
@@ -115,7 +118,9 @@ exports.deleteService = asyncHandler(async (req, res) => {
   if (!business) return error(res, 404, 'Business not found.');
   if (!canManageService(req, business)) return error(res, 403, 'You do not own this business.');
 
+  const bid = service.businessId;
   await Service.findByIdAndDelete(req.params.id);
+  await syncBusinessPublicActivation(bid);
   return success(res, 200, null, 'Service deleted successfully.');
 });
 

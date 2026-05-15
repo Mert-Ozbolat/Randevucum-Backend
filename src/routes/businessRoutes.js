@@ -14,6 +14,13 @@ const router = express.Router();
 
 router.get('/home-slider-ads', businessController.getHomeSliderAds);
 
+router.get(
+  '/setup-status',
+  protect,
+  restrictTo(ROLES.SUPER_ADMIN, ROLES.BUSINESS_OWNER),
+  businessController.getSetupStatus
+);
+
 router.put(
   '/:id/home-slider-promo',
   protect,
