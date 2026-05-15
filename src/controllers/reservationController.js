@@ -10,6 +10,7 @@ const { getAvailableSlots, timeToMinutes, minutesToTime } = require('../utils/sl
 const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('../utils/calendarDate');
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
+const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
 
 /**
  * Calculate end time from start time and duration
@@ -127,10 +128,19 @@ exports.createReservation = asyncHandler(async (req, res) => {
   });
 
   await reservation.populate([
-    { path: 'businessId', select: 'name address phone' },
+    { path: 'businessId', select: 'name address phone ownerId' },
     { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
     { path: 'staffId', select: 'name title' },
   ]);
+
+  const customerPhoneForWa =
+    req.user.phone && String(req.user.phone).trim()
+      ? String(req.user.phone).trim()
+      : undefined;
+  sendReservationBookingWhatsApp(reservation._id, { customerPhoneHint: customerPhoneForWa }).catch(
+    (err) => console.error('[whatsapp][booking]', err?.message || err)
+  );
+
   return success(res, 201, reservation, 'Reservation created successfully.');
 });
 

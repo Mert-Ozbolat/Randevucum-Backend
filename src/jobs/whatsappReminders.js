@@ -1,8 +1,16 @@
 const Reservation = require('../models/Reservation');
 const Subscription = require('../models/Subscription');
-const Business = require('../models/Business');
 const { sendWhatsApp } = require('../services/whatsapp');
 const { resolveProPriceIds } = require('../config/stripe');
+const {
+  toYmd,
+  buildCustomerReminderMessage,
+  buildBusinessReminderMessage,
+} = require('../services/whatsappReservationMessages');
+const {
+  resolveBusinessPhone,
+  resolveCustomerPhone,
+} = require('../services/whatsappReservationNotify');
 
 function parseTimeToMinutes(timeStr) {
   const m = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -14,9 +22,7 @@ function parseTimeToMinutes(timeStr) {
 }
 
 function appointmentStartUtcFromStoredDay(storedDay, timeStr) {
-  // Reservation day is stored at 12:00 UTC to keep calendar day stable.
-  // Business is assumed Europe/Istanbul (UTC+3, no DST). We convert local time to UTC by subtracting 3 hours.
-  const tzOffsetMin = Number(process.env.BUSINESS_TZ_OFFSET_MINUTES || 180); // 180 = UTC+3
+  const tzOffsetMin = Number(process.env.BUSINESS_TZ_OFFSET_MINUTES || 180);
   const mins = parseTimeToMinutes(timeStr);
   if (!storedDay || Number.isNaN(storedDay.getTime()) || mins === null) return null;
   const y = storedDay.getUTCFullYear();
@@ -28,36 +34,7 @@ function appointmentStartUtcFromStoredDay(storedDay, timeStr) {
   return new Date(utcMs);
 }
 
-function buildCustomerMessage({ businessName, dateKey, time, serviceName }) {
-  return (
-    `Hatırlatma: ${businessName} için randevunuz yaklaşıyor.\n` +
-    `Tarih: ${dateKey} Saat: ${time}\n` +
-    `Hizmet: ${serviceName}\n` +
-    `Görüşmek üzere.`
-  );
-}
-
-function buildBusinessMessage({ customerName, customerPhone, dateKey, time, serviceName }) {
-  const phoneLine = customerPhone ? `\nMüşteri tel: ${customerPhone}` : '';
-  return (
-    `Hatırlatma: Yaklaşan randevu.\n` +
-    `Tarih: ${dateKey} Saat: ${time}\n` +
-    `Hizmet: ${serviceName}\n` +
-    `Müşteri: ${customerName || '-'}` +
-    phoneLine
-  );
-}
-
-function toYmd(storedDay) {
-  // storedDay is UTC day; format yyyy-MM-dd using UTC parts
-  const y = storedDay.getUTCFullYear();
-  const m = String(storedDay.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(storedDay.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
 async function runWhatsAppReminders({ now = new Date() } = {}) {
-  // Randevu başlangıcı (şimdi, şimdi + N dakika] aralığındaysa hatırlatma gönderilir (henüz başlamamış).
   const lookaheadMinutes = Number(
     process.env.WHATSAPP_REMINDER_LOOKAHEAD_MINUTES ||
       process.env.WHATSAPP_REMINDER_MINUTES_BEFORE ||
@@ -66,7 +43,6 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   const nowMs = now.getTime();
   const horizonMs = nowMs + Math.max(1, lookaheadMinutes) * 60 * 1000;
 
-  // Active PRO: planKey === 'pro' OR Stripe price id listed as Pro in env (STRIPE_PRO_PRICE_IDS / STRIPE_PRICE_ID_2 / …)
   const proPriceIds = resolveProPriceIds();
   const proMatch = [{ planKey: 'pro' }];
   if (proPriceIds.length > 0) {
@@ -86,7 +62,6 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     return { ok: true, scanned: 0, sent: 0, skipped: 0, reason: 'no_pro_businesses' };
   }
 
-  // Pull candidate reservations (we'll compute exact time window in JS)
   const candidates = await Reservation.find({
     businessId: { $in: proBusinessIds },
     status: { $in: ['pending', 'approved'] },
@@ -105,7 +80,6 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   let sent = 0;
   let skipped = 0;
   let matchedWindow = 0;
-  /** Postman/teşhis: son gönderim denemeleri (telefon numarası yok) */
   const sendAttempts = [];
 
   for (const r of candidates) {
@@ -122,15 +96,17 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     const customer = r.customerId;
     const service = r.serviceId;
     const dateKey = toYmd(r.date);
+    const customerId = customer?._id || r.customerId;
 
     const updates = {};
     let anyAttempt = false;
 
-    // Customer reminder
+    const customerPhone = await resolveCustomerPhone(customer, customerId);
+    const businessPhone = await resolveBusinessPhone(business);
+
     if (!r.reminders?.customerWhatsAppSentAt) {
       anyAttempt = true;
-      const customerPhone = customer?.phone;
-      const msg = buildCustomerMessage({
+      const msg = buildCustomerReminderMessage({
         businessName: business?.name || 'İşletme',
         dateKey,
         time: r.time,
@@ -139,16 +115,17 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       const res = await sendWhatsApp({
         toPhone: customerPhone,
         body: msg,
-        tag: `reservation:${r._id}:customer`,
+        tag: `reservation:${r._id}:customer:reminder`,
       });
       sendAttempts.push({
         reservationId: String(r._id),
         channel: 'customer',
+        kind: 'reminder',
         ok: Boolean(res.ok),
         reason: res.reason || null,
         message: res.message ? String(res.message).slice(0, 200) : null,
         dryRun: Boolean(res.dryRun),
-        hasPhone: Boolean(customerPhone && String(customerPhone).trim()),
+        hasPhone: Boolean(customerPhone),
       });
       if (res.ok) {
         updates['reminders.customerWhatsAppSentAt'] = new Date();
@@ -158,22 +135,14 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       }
     }
 
-    // Business reminder (send to business phone; fallback to owner's phone if present)
     if (!r.reminders?.businessWhatsAppSentAt) {
       anyAttempt = true;
-      let businessPhone = business?.phone;
-      if (!businessPhone) {
-        const bizRow = await Business.findById(business?._id).select('ownerId').lean();
-        if (bizRow?.ownerId) {
-          // ownerId is a User; we can populate phone from reservation populate? not available here
-          // (optional) keep as null; skip if no phone configured.
-        }
-      }
-
-      const customerName = customer ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim() : '';
-      const msg = buildBusinessMessage({
+      const customerName = customer
+        ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
+        : '';
+      const msg = buildBusinessReminderMessage({
         customerName,
-        customerPhone: customer?.phone || '',
+        customerPhone: customerPhone || '',
         dateKey,
         time: r.time,
         serviceName: service?.name || 'Hizmet',
@@ -181,16 +150,17 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       const res = await sendWhatsApp({
         toPhone: businessPhone,
         body: msg,
-        tag: `reservation:${r._id}:business`,
+        tag: `reservation:${r._id}:business:reminder`,
       });
       sendAttempts.push({
         reservationId: String(r._id),
         channel: 'business',
+        kind: 'reminder',
         ok: Boolean(res.ok),
         reason: res.reason || null,
         message: res.message ? String(res.message).slice(0, 200) : null,
         dryRun: Boolean(res.dryRun),
-        hasPhone: Boolean(businessPhone && String(businessPhone).trim()),
+        hasPhone: Boolean(businessPhone),
       });
       if (res.ok) {
         updates['reminders.businessWhatsAppSentAt'] = new Date();
@@ -214,10 +184,10 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     sendAttempts,
     rule: {
       lookaheadMinutes,
-      description: 'Randevu başlangıcı şimdi ile şimdi+lookahead arasındaysa bildirim (yalnızca henüz gönderilmemişse).',
+      description:
+        'Randevu başlangıcı şimdi ile şimdi+lookahead arasındaysa müşteri ve işletmeye hatırlatma (daha önce gönderilmediyse).',
     },
   };
 }
 
 module.exports = { runWhatsAppReminders };
-

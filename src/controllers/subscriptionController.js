@@ -4,6 +4,7 @@ const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { SUBSCRIPTION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
+const { getStaffQuota } = require('../utils/subscriptionLimits');
 
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -54,24 +55,44 @@ exports.getStatus = asyncHandler(async (req, res) => {
     .populate('businessId', 'name businessType')
     .lean();
 
+  const quota = await getStaffQuota(businessId);
+
   if (!subscription) {
-    return success(res, 200, {
-      businessId,
-      hasSubscription: false,
-      status: null,
-      endDate: null,
-      isActive: false,
-    }, 'OK');
+    return success(
+      res,
+      200,
+      {
+        businessId,
+        hasSubscription: false,
+        status: null,
+        endDate: null,
+        isActive: false,
+        planKey: quota.planKey,
+        staffLimit: quota.limit,
+        staffCount: quota.current,
+        canAddStaff: quota.canAdd,
+      },
+      'OK'
+    );
   }
 
   const isActive =
     subscription.status === SUBSCRIPTION_STATUS.ACTIVE &&
     new Date(subscription.endDate) >= new Date();
 
-  return success(res, 200, {
-    ...subscription,
-    isActive,
-  }, 'OK');
+  return success(
+    res,
+    200,
+    {
+      ...subscription,
+      isActive,
+      planKey: quota.planKey,
+      staffLimit: quota.limit,
+      staffCount: quota.current,
+      canAddStaff: quota.canAdd,
+    },
+    'OK'
+  );
 });
 
 /**

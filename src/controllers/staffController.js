@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
+const { getStaffQuota } = require('../utils/subscriptionLimits');
 
 const canManageStaff = (req, business) => {
   if (req.user.role === ROLES.SUPER_ADMIN) return true;
@@ -21,6 +22,19 @@ exports.createStaff = asyncHandler(async (req, res) => {
   const business = await Business.findById(bid);
   if (!business) return error(res, 404, 'Business not found.');
   if (!canManageStaff(req, business)) return error(res, 403, 'You do not own this business.');
+
+  if (req.user.role !== ROLES.SUPER_ADMIN) {
+    const quota = await getStaffQuota(bid);
+    if (!quota.canAdd) {
+      return error(
+        res,
+        403,
+        quota.planKey === 'pro'
+          ? 'Personel eklenemedi.'
+          : `Standart pakette en fazla ${quota.limit} personel ekleyebilirsiniz. Pro pakete geçerek sınırsız personel ekleyin.`
+      );
+    }
+  }
 
   if (data.email !== undefined && String(data.email).trim() === '') delete data.email;
   if (data.phone !== undefined && String(data.phone).trim() === '') delete data.phone;

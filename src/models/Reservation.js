@@ -62,6 +62,10 @@ const reservationSchema = new mongoose.Schema(
       customerWhatsAppSentAt: { type: Date, default: null },
       /** WhatsApp reminder to business owner / business phone */
       businessWhatsAppSentAt: { type: Date, default: null },
+      /** Randevu oluşturulunca müşteriye onay mesajı */
+      customerWhatsAppBookingSentAt: { type: Date, default: null },
+      /** Randevu oluşturulunca işletmeye yeni randevu mesajı */
+      businessWhatsAppBookingSentAt: { type: Date, default: null },
       /** Last error message (debug) */
       lastError: { type: String, trim: true, default: '' },
     },
