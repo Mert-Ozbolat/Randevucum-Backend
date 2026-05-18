@@ -10,9 +10,24 @@ const {
   resolveFrontendBaseUrl,
   resolveProPriceIds,
 } = require('../config/stripe');
+const {
+  clearBillingFailure,
+  startPaymentGracePeriod,
+  suspendBusinessBilling,
+} = require('../utils/subscriptionBilling');
+const { syncBusinessPublicActivation } = require('../utils/businessSetup');
 
-function mapStripeSubscriptionStatus(stripeStatus) {
-  if (stripeStatus === 'active' || stripeStatus === 'trialing' || stripeStatus === 'past_due') {
+function mapStripeSubscriptionStatus(stripeStatus, { cancelAtPeriodEnd, periodEnd } = {}) {
+  const now = Date.now();
+  const periodStillValid = periodEnd && periodEnd * 1000 >= now;
+
+  if (stripeStatus === 'active' || stripeStatus === 'trialing') {
+    return SUBSCRIPTION_STATUS.ACTIVE;
+  }
+  if (stripeStatus === 'past_due') {
+    return SUBSCRIPTION_STATUS.ACTIVE;
+  }
+  if (stripeStatus === 'canceled' && cancelAtPeriodEnd && periodStillValid) {
     return SUBSCRIPTION_STATUS.ACTIVE;
   }
   if (
@@ -29,36 +44,73 @@ async function upsertSubscriptionFromStripeSubscription(businessId, sub) {
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
   const endDate = new Date(sub.current_period_end * 1000);
   const startDate = new Date(sub.current_period_start * 1000);
-  const status = mapStripeSubscriptionStatus(sub.status);
+  const cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end);
+  const status = mapStripeSubscriptionStatus(sub.status, {
+    cancelAtPeriodEnd,
+    periodEnd: sub.current_period_end,
+  });
   const firstItem = Array.isArray(sub.items?.data) ? sub.items.data[0] : null;
   const stripePriceId =
     firstItem && firstItem.price && (typeof firstItem.price === 'string' ? firstItem.price : firstItem.price.id)
-      ? (typeof firstItem.price === 'string' ? firstItem.price : firstItem.price.id)
+      ? typeof firstItem.price === 'string'
+        ? firstItem.price
+        : firstItem.price.id
       : null;
   const proIds = resolveProPriceIds();
   const planKey = stripePriceId && proIds.includes(stripePriceId) ? 'pro' : 'standard';
 
+  const setFields = {
+    businessId: new mongoose.Types.ObjectId(businessId),
+    stripeSubscriptionId: sub.id,
+    stripeCustomerId: customerId,
+    stripePriceId: stripePriceId || undefined,
+    planKey,
+    status,
+    startDate,
+    endDate,
+    isTrial: false,
+    source: 'stripe',
+    cancelAtPeriodEnd,
+    canceledAt: sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
+  };
+
+  if (sub.status === 'active' || sub.status === 'trialing') {
+    setFields.paymentFailedAt = null;
+    setFields.gracePeriodEndsAt = null;
+    setFields.billingNotice = null;
+  }
+
   await Subscription.findOneAndUpdate(
     { stripeSubscriptionId: sub.id },
-    {
-      $set: {
-        businessId: new mongoose.Types.ObjectId(businessId),
-        stripeSubscriptionId: sub.id,
-        stripeCustomerId: customerId,
-        stripePriceId: stripePriceId || undefined,
-        planKey,
-        status,
-        startDate,
-        endDate,
-        canceledAt: sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
-      },
+  {
+      $set: setFields,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
   await Business.findByIdAndUpdate(businessId, {
-    $set: { hasPaidSubscription: true, ...(customerId ? { stripeCustomerId: customerId } : {}) },
+    $set: {
+      hasPaidSubscription: true,
+      billingSuspended: false,
+      ...(customerId ? { stripeCustomerId: customerId } : {}),
+    },
   });
+
+  await clearBillingFailure(businessId);
+  try {
+    await syncBusinessPublicActivation(businessId);
+  } catch (e) {
+    console.warn('[stripe] syncBusinessPublicActivation failed', e?.message || e);
+  }
+}
+
+async function resolveBusinessIdFromStripeSubscription(sub) {
+  let businessId = sub.metadata?.businessId;
+  if (!businessId) {
+    const existing = await Subscription.findOne({ stripeSubscriptionId: sub.id }).lean();
+    businessId = existing?.businessId?.toString();
+  }
+  return businessId;
 }
 
 /**
@@ -81,8 +133,35 @@ exports.getStripeConfig = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /payments/stripe/billing-portal — Ödeme yöntemi güncelleme (grace / past_due)
+ */
+exports.createBillingPortalSession = asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) return error(res, 503, 'Stripe is not configured.');
+
+  const { businessId } = req.body;
+  if (!businessId) return error(res, 400, 'businessId is required.');
+
+  const business = await Business.findById(businessId);
+  if (!business) return error(res, 404, 'Business not found.');
+  if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
+    return error(res, 403, 'You do not own this business.');
+  }
+  if (!business.stripeCustomerId) {
+    return error(res, 400, 'Stripe müşteri kaydı yok. Önce abonelik satın alın.');
+  }
+
+  const base = resolveFrontendBaseUrl();
+  const session = await stripe.billingPortal.sessions.create({
+    customer: business.stripeCustomerId,
+    return_url: `${base}/dashboard/business/subscription`,
+  });
+
+  return success(res, 200, { url: session.url }, 'OK');
+});
+
+/**
  * POST /payments/stripe/checkout-session
- * Body: { businessId, priceId? } — priceId overrides env default (same Stripe account).
  */
 exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const stripe = getStripe();
@@ -90,67 +169,26 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const allowed = new Set(plans.map((p) => p.priceId));
   const requested = (req.body.priceId || '').trim();
   const fallback = plans[0]?.priceId || '';
-  const priceId =
-    requested && allowed.has(requested) ? requested : fallback;
+  const priceId = requested && allowed.has(requested) ? requested : fallback;
 
-  // Debug logs (safe): never log STRIPE_SECRET_KEY / webhook secrets.
   const reqId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log('[stripe][checkout-session] start', {
-    reqId,
-    userId: req.user?._id?.toString?.() || null,
-    role: req.user?.role || null,
-    businessId: req.body?.businessId || null,
-    requestedPriceId: requested || null,
-    resolvedPriceId: priceId || null,
-    allowedPlanCount: plans.length,
-    allowedPriceIds: plans.map((p) => p.priceId),
-    frontendUrlSet: Boolean(process.env.FRONTEND_URL),
-    secretKeySet: Boolean(process.env.STRIPE_SECRET_KEY),
-    webhookSecretSet: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
-  });
+  console.log('[stripe][checkout-session] start', { reqId, businessId: req.body?.businessId, priceId });
 
-  if (!stripe) {
-    console.warn('[stripe][checkout-session] stripe client missing', { reqId });
-    return error(res, 503, 'Stripe is not configured (STRIPE_SECRET_KEY).');
-  }
+  if (!stripe) return error(res, 503, 'Stripe is not configured (STRIPE_SECRET_KEY).');
   if (!priceId || !allowed.has(priceId)) {
-    console.warn('[stripe][checkout-session] invalid priceId', {
-      reqId,
-      requested: requested || '(empty)',
-      allowed: plans.map((p) => p.priceId),
-    });
-    return error(
-      res,
-      400,
-      `Geçersiz veya tanımsız paket (priceId). Gönderilen: ${requested || '(boş)'} | Sunucuda tanımlı paketler: ${plans
-        .map((p) => p.priceId)
-        .join(', ') || '(yok)'}`
-    );
+    return error(res, 400, 'Geçersiz paket (priceId).');
   }
 
   const { businessId } = req.body;
-  if (!businessId) {
-    console.warn('[stripe][checkout-session] missing businessId', { reqId });
-    return error(res, 400, 'businessId is required.');
-  }
+  if (!businessId) return error(res, 400, 'businessId is required.');
 
   if (req.user.role !== ROLES.BUSINESS_OWNER && req.user.role !== ROLES.SUPER_ADMIN) {
-    console.warn('[stripe][checkout-session] forbidden role', { reqId, role: req.user.role });
     return error(res, 403, 'Only business owners can start subscription checkout.');
   }
 
   const business = await Business.findById(businessId);
-  if (!business) {
-    console.warn('[stripe][checkout-session] business not found', { reqId, businessId });
-    return error(res, 404, 'Business not found.');
-  }
+  if (!business) return error(res, 404, 'Business not found.');
   if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
-    console.warn('[stripe][checkout-session] business ownership mismatch', {
-      reqId,
-      businessId,
-      ownerId: business.ownerId?.toString?.() || null,
-      userId: req.user._id?.toString?.() || null,
-    });
     return error(res, 403, 'You do not own this business.');
   }
 
@@ -164,15 +202,9 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     success_url: successUrl,
     cancel_url: cancelUrl,
     client_reference_id: businessId,
-    metadata: {
-      businessId,
-      userId: req.user._id.toString(),
-    },
+    metadata: { businessId, userId: req.user._id.toString() },
     subscription_data: {
-      metadata: {
-        businessId,
-        userId: req.user._id.toString(),
-      },
+      metadata: { businessId, userId: req.user._id.toString() },
     },
     allow_promotion_codes: true,
   };
@@ -183,45 +215,21 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     sessionParams.customer_email = req.user.email;
   }
 
-  console.log('[stripe][checkout-session] creating session', {
-    reqId,
-    mode: sessionParams.mode,
-    lineItems: sessionParams.line_items,
-    customerProvided: Boolean(sessionParams.customer),
-    customerEmailProvided: Boolean(sessionParams.customer_email),
-    successUrl,
-    cancelUrl,
-  });
-  let session;
-  try {
-    session = await stripe.checkout.sessions.create(sessionParams);
-  } catch (e) {
-    const msg = e && typeof e.message === 'string' ? e.message : String(e);
-    console.error('[stripe][checkout-session] stripe error', { reqId, message: msg });
-    // Common misconfig: prod_... (product) instead of price_... (price)
-    if (msg.includes('No such price') || msg.includes('No such plan')) {
-      return error(
-        res,
-        400,
-        `Stripe fiyatı bulunamadı. priceId bir Price olmalı (price_...). Siz prod_... (Product) göndermiş olabilirsiniz. Gönderilen: ${priceId}`
-      );
-    }
-    throw e;
-  }
-  console.log('[stripe][checkout-session] created', { reqId, sessionId: session.id, hasUrl: Boolean(session.url) });
+  const session = await stripe.checkout.sessions.create(sessionParams);
+  console.log('[stripe][checkout-session] created', { reqId, sessionId: session.id });
 
   return success(res, 200, { url: session.url, sessionId: session.id }, 'OK');
 });
 
 /**
- * POST /payments/stripe/webhook — Raw body only; registered before express.json in app.js
+ * POST /payments/stripe/webhook
  */
 exports.stripeWebhook = async (req, res) => {
   const stripe = getStripe();
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!stripe || !webhookSecret) {
-    console.warn('[stripe] Webhook ignored: STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET missing.');
+    console.warn('[stripe] Webhook ignored: missing config.');
     return res.status(503).send('Webhook not configured');
   }
 
@@ -240,17 +248,16 @@ exports.stripeWebhook = async (req, res) => {
         const session = event.data.object;
         if (session.mode !== 'subscription') break;
         const businessId = session.metadata?.businessId || session.client_reference_id;
-        if (!businessId) {
-          console.warn('[stripe] checkout.session.completed without businessId metadata');
-          break;
-        }
+        if (!businessId) break;
         const stripeSubId =
-          typeof session.subscription === 'string'
-            ? session.subscription
-            : session.subscription?.id;
+          typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
         if (!stripeSubId) break;
         const sub = await stripe.subscriptions.retrieve(stripeSubId);
         await upsertSubscriptionFromStripeSubscription(businessId, sub);
+        await Subscription.updateMany(
+          { businessId, isTrial: true, stripeSubscriptionId: { $in: [null, ''] } },
+          { $set: { status: SUBSCRIPTION_STATUS.EXPIRED } }
+        );
         const cus = session.customer;
         const customerId = typeof cus === 'string' ? cus : cus?.id;
         if (customerId) {
@@ -261,12 +268,12 @@ exports.stripeWebhook = async (req, res) => {
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object;
-        let businessId = sub.metadata?.businessId;
-        if (!businessId) {
-          const existing = await Subscription.findOne({ stripeSubscriptionId: sub.id }).lean();
-          businessId = existing?.businessId?.toString();
-        }
+        const businessId = await resolveBusinessIdFromStripeSubscription(sub);
         if (businessId) await upsertSubscriptionFromStripeSubscription(businessId, sub);
+        if (sub.status === 'unpaid') {
+          const bid = businessId || (await resolveBusinessIdFromStripeSubscription(sub));
+          if (bid) await suspendBusinessBilling(bid);
+        }
         break;
       }
       case 'customer.subscription.deleted': {
@@ -277,9 +284,48 @@ exports.stripeWebhook = async (req, res) => {
             $set: {
               status: SUBSCRIPTION_STATUS.CANCELED,
               canceledAt: new Date(),
+              cancelAtPeriodEnd: false,
             },
           }
         );
+        const businessId = await resolveBusinessIdFromStripeSubscription(sub);
+        if (businessId) {
+          const stillActive = await Subscription.findOne({
+            businessId,
+            status: SUBSCRIPTION_STATUS.ACTIVE,
+            endDate: { $gte: new Date() },
+          }).lean();
+          if (!stillActive) {
+            await suspendBusinessBilling(businessId);
+          }
+        }
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const stripeSubId =
+          typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+        if (!stripeSubId) break;
+        const sub = await stripe.subscriptions.retrieve(stripeSubId);
+        const businessId = await resolveBusinessIdFromStripeSubscription(sub);
+        if (!businessId) break;
+        const local = await Subscription.findOne({ stripeSubscriptionId: sub.id });
+        if (local) {
+          await startPaymentGracePeriod(businessId, local._id);
+        }
+        console.log('[stripe] invoice.payment_failed — grace started', { businessId, stripeSubId });
+        break;
+      }
+      case 'invoice.paid': {
+        const invoice = event.data.object;
+        const stripeSubId =
+          typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+        if (!stripeSubId) break;
+        const sub = await stripe.subscriptions.retrieve(stripeSubId);
+        const businessId = await resolveBusinessIdFromStripeSubscription(sub);
+        if (businessId) {
+          await upsertSubscriptionFromStripeSubscription(businessId, sub);
+        }
         break;
       }
       default:
@@ -292,3 +338,5 @@ exports.stripeWebhook = async (req, res) => {
 
   return res.json({ received: true });
 };
+
+module.exports.upsertSubscriptionFromStripeSubscription = upsertSubscriptionFromStripeSubscription;

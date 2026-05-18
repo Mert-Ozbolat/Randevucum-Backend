@@ -71,6 +71,13 @@ exports.createReservation = asyncHandler(async (req, res) => {
 
   const business = await Business.findById(businessId);
   if (!business) return error(res, 404, 'Business not found.');
+  if (business.billingSuspended) {
+    return error(
+      res,
+      403,
+      'Bu işletmenin aboneliği askıda. Yeni randevu alınamaz; işletme sahibi aboneliğini yenilemelidir.'
+    );
+  }
   if (!business.isActive) {
     return error(res, 403, 'Bu işletme henüz randevu almaya açık değil.');
   }

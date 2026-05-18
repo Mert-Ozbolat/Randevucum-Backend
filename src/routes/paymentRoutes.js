@@ -19,4 +19,11 @@ router.post(
   stripeController.createCheckoutSession
 );
 
+router.post(
+  '/stripe/billing-portal',
+  protect,
+  restrictTo(ROLES.BUSINESS_OWNER, ROLES.SUPER_ADMIN),
+  stripeController.createBillingPortalSession
+);
+
 module.exports = router;

@@ -33,6 +33,14 @@ const subscriptionSchema = new mongoose.Schema(
     stripePriceId: { type: String, trim: true },
     /** Business tier derived from Stripe price id */
     planKey: { type: String, trim: true, default: 'standard' }, // standard | pro
+    /** Ücretsiz PRO deneme (işletme oluşturulunca) */
+    isTrial: { type: Boolean, default: false },
+    source: { type: String, enum: ['trial', 'stripe', 'demo'], default: 'trial' },
+    /** Stripe cancel_at_period_end — dönem sonuna kadar erişim */
+    cancelAtPeriodEnd: { type: Boolean, default: false },
+    paymentFailedAt: { type: Date, default: null },
+    gracePeriodEndsAt: { type: Date, default: null },
+    billingNotice: { type: String, trim: true, default: null },
   },
   {
     timestamps: true,

@@ -106,6 +106,12 @@ const businessSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    /** Ödeme başarısız + grace süresi bitti — yeni randevu alınamaz */
+    billingSuspended: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     /** Stripe Customer id (cus_...) for Checkout / portal reuse */
     stripeCustomerId: { type: String, trim: true },
     workingHours: [workingHoursSchema],

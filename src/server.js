@@ -6,6 +6,7 @@ require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const connectDB = require("./config/db");
 const app = require("./app");
 const { runWhatsAppReminders } = require("./jobs/whatsappReminders");
+const { runSubscriptionBillingMaintenance } = require("./jobs/subscriptionBilling");
 
 // 🔥 Cloud Run PORT FIX
 const PORT = process.env.PORT || 8080;
@@ -28,6 +29,20 @@ app.listen(PORT, "0.0.0.0", () => {
     };
     tick();
     setInterval(tick, everyMs);
+  }
+
+  const billingCronEnabled =
+    String(process.env.ENABLE_SUBSCRIPTION_BILLING_CRON || "true").toLowerCase() === "true";
+  if (billingCronEnabled) {
+    const billingMs = Number(process.env.SUBSCRIPTION_BILLING_CRON_MS || 60 * 60 * 1000);
+    console.log(`[jobs] Subscription billing cron enabled: every ${billingMs}ms`);
+    const billingTick = () => {
+      runSubscriptionBillingMaintenance()
+        .then((r) => console.log("[jobs] subscription-billing result", r))
+        .catch((e) => console.error("[jobs] subscription-billing error", e?.message || e));
+    };
+    billingTick();
+    setInterval(billingTick, billingMs);
   }
 });
 

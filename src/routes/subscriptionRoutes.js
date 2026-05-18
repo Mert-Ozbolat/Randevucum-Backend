@@ -15,6 +15,7 @@ router.post(
 
 router.get(
   '/status/:businessId',
+  protect,
   statusParamRules(),
   validate,
   subscriptionController.getStatus
@@ -26,6 +27,14 @@ router.patch(
   cancelParamRules(),
   validate,
   subscriptionController.cancelSubscription
+);
+
+router.patch(
+  '/:id/reactivate',
+  protect,
+  cancelParamRules(),
+  validate,
+  subscriptionController.reactivateSubscription
 );
 
 module.exports = router;
