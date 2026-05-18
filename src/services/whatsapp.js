@@ -24,6 +24,65 @@ function isEnabled() {
   return String(process.env.WHATSAPP_ENABLED || '').toLowerCase() === 'true';
 }
 
+/** Twilio WhatsApp sık hata kodları — Cloud Run loglarında teşhis */
+function twilioDeliveryHint(errorCode, errorMessage) {
+  const code = Number(errorCode);
+  if (code === 63015) {
+    return 'Alıcı Twilio WhatsApp sandbox\'a join olmamış. Twilio Console → Sandbox → join kodunu +905... hattından sandbox numarasına gönderin.';
+  }
+  if (code === 63016) {
+    return '24 saatlik mesaj penceresi dışında serbest metin gönderilemez. Sandbox\'ta alıcı önce size yazmalı veya onaylı şablon kullanılmalı.';
+  }
+  if (code === 63007) {
+    return 'Alıcı WhatsApp\'ta geçersiz veya kayıtlı değil.';
+  }
+  if (errorMessage) return String(errorMessage);
+  return 'Twilio Console → Messaging → Logs içinde bu SID için Error Code kontrol edin.';
+}
+
+async function logTwilioDeliveryStatus(client, messageSid, tag, toE164) {
+  const delays = [5000, 15000];
+  for (const ms of delays) {
+    await new Promise((r) => setTimeout(r, ms));
+    try {
+      const msg = await client.messages(messageSid).fetch();
+      const status = msg.status;
+      const errorCode = msg.errorCode;
+      const errorMessage = msg.errorMessage;
+
+      if (status === 'delivered' || status === 'read') {
+        waLog('📬', 'WhatsApp teslim edildi', { tag, sid: messageSid, to: toE164, status });
+        return;
+      }
+      if (status === 'failed' || status === 'undelivered') {
+        waLog('📵', 'WhatsApp teslim EDİLEMEDİ (API ok ama telefona düşmedi)', {
+          tag,
+          sid: messageSid,
+          to: toE164,
+          status,
+          errorCode: errorCode || null,
+          errorMessage: errorMessage || null,
+          hint: twilioDeliveryHint(errorCode, errorMessage),
+        });
+        return;
+      }
+      if (ms === delays[delays.length - 1]) {
+        waLog('⏳', `Twilio hâlâ ${status} — Twilio Console'da SID kontrol edin`, {
+          tag,
+          sid: messageSid,
+          to: toE164,
+          status,
+          errorCode: errorCode || null,
+          hint: 'Sandbox kullanıyorsanız her alıcı (+905338215466, +905338811368) join kodu göndermiş olmalı.',
+        });
+      }
+    } catch (e) {
+      waLog('⚠️', 'Twilio teslimat sorgusu hatası', { tag, sid: messageSid, message: e?.message || String(e) });
+      return;
+    }
+  }
+}
+
 async function sendViaMetaCloud({ toE164, body, tag }) {
   const token = process.env.WHATSAPP_CLOUD_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -95,7 +154,16 @@ async function sendViaTwilio({ toE164, body, tag }) {
       to,
       body,
     });
-    return { ok: true, provider: 'twilio', sid: msg.sid };
+    const initialStatus = msg.status || 'unknown';
+    void logTwilioDeliveryStatus(client, msg.sid, tag, toE164);
+    return {
+      ok: true,
+      provider: 'twilio',
+      sid: msg.sid,
+      twilioStatus: initialStatus,
+      errorCode: msg.errorCode || null,
+      errorMessage: msg.errorMessage || null,
+    };
   } catch (e) {
     const message = e?.message || String(e);
     const code = e?.code;
@@ -151,8 +219,26 @@ async function sendWhatsApp({ toPhone, body, tag }) {
 
   if (provider === 'twilio') {
     const res = await sendViaTwilio({ toE164: to, body, tag });
-    if (res.ok) waLog('✅', 'Twilio mesaj kuyruğa alındı', { tag, sid: res.sid });
-    else if (!res.skipped) waLog('❌', 'Twilio gönderim hatası', { tag, reason: res.reason, message: res.message });
+    if (res.ok) {
+      waLog('✅', 'Twilio API kabul etti (henüz teslimat garantisi yok)', {
+        tag,
+        sid: res.sid,
+        twilioStatus: res.twilioStatus,
+        to,
+        note: '5–15 sn sonra 📬 veya 📵 logu gelir — telefonda yoksa 📵 satırına bakın',
+      });
+      if (res.errorCode || res.twilioStatus === 'failed') {
+        waLog('📵', 'Twilio anında hata döndü', {
+          tag,
+          sid: res.sid,
+          errorCode: res.errorCode,
+          errorMessage: res.errorMessage,
+          hint: twilioDeliveryHint(res.errorCode, res.errorMessage),
+        });
+      }
+    } else if (!res.skipped) {
+      waLog('❌', 'Twilio gönderim hatası', { tag, reason: res.reason, message: res.message });
+    }
     return res;
   }
   const res = await sendViaMetaCloud({ toE164: to, body, tag });
