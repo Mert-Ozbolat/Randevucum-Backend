@@ -62,12 +62,13 @@ function resolveProPriceIds() {
   const ids = [
     process.env.STRIPE_PRO_PRICE_ID,
     process.env.STRIPE_PRO_PRICE_IDS,
-    process.env.STRIPE_PRICE_ID_2, // common convention: second plan = Pro
+    process.env.STRIPE_PRICE_ID_2, // Pro paket Price ID (price_... olmalı, prod_ değil)
   ]
     .filter(Boolean)
     .flatMap((x) => String(x).split(','))
     .map((x) => x.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((id) => id.startsWith('price_'));
   return Array.from(new Set(ids));
 }
 

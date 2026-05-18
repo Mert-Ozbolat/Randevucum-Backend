@@ -152,4 +152,4 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   return await sendViaMetaCloud({ toE164: to, body, tag });
 }
 
-module.exports = { sendWhatsApp, normalizeE164Tr };
+module.exports = { sendWhatsApp, normalizeE164Tr, isEnabled, isTwilioConfigured, isMetaConfigured };

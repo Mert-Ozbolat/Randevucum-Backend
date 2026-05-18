@@ -59,6 +59,10 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
 
   const proBusinessIds = proSubs.map((s) => s.businessId);
   if (!proBusinessIds.length) {
+    console.log(
+      '[jobs][whatsapp-reminders] PRO işletme yok — yaklaşan randevu hatırlatması atlandı. ' +
+        'Yeni randevu bildirimi randevu oluşturulunca (POST /reservations) anlık gider; işletme için PRO şartı yoktur.'
+    );
     return { ok: true, scanned: 0, sent: 0, skipped: 0, reason: 'no_pro_businesses' };
   }
 

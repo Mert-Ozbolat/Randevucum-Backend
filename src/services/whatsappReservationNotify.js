@@ -1,10 +1,9 @@
-const Subscription = require('../models/Subscription');
 const Business = require('../models/Business');
 const User = require('../models/User');
 const Reservation = require('../models/Reservation');
-const { sendWhatsApp } = require('./whatsapp');
-const { resolveProPriceIds } = require('../config/stripe');
+const { sendWhatsApp, isEnabled: isWhatsAppEnabled } = require('./whatsapp');
 const { RESERVATION_STATUS } = require('../config/constants');
+const { getActivePlanForBusiness } = require('../utils/subscriptionLimits');
 const {
   toYmd,
   buildCustomerReminderMessage,
@@ -13,21 +12,9 @@ const {
   buildBusinessBookingMessage,
 } = require('./whatsappReservationMessages');
 
-async function isBusinessPro(businessId, now = new Date()) {
-  const proPriceIds = resolveProPriceIds();
-  const proMatch = [{ planKey: 'pro' }];
-  if (proPriceIds.length > 0) {
-    proMatch.push({ stripePriceId: { $in: proPriceIds } });
-  }
-  const sub = await Subscription.findOne({
-    businessId,
-    status: 'active',
-    endDate: { $gte: now },
-    $or: proMatch,
-  })
-    .select('_id')
-    .lean();
-  return Boolean(sub);
+async function isBusinessPro(businessId) {
+  const { planKey, isActive } = await getActivePlanForBusiness(businessId);
+  return isActive && planKey === 'pro';
 }
 
 async function resolveBusinessPhone(business) {
@@ -122,6 +109,14 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     results.business = { ok: false, skipped: true, reason: 'no_business_phone' };
   }
 
+  console.log('[whatsapp][booking]', {
+    reservationId: String(r._id),
+    whatsappEnabled: isWhatsAppEnabled(),
+    businessPhone: businessPhone ? 'set' : 'missing',
+    businessResult: results.business,
+    isPro,
+  });
+
   // Müşteri — PRO işletmeler
   if (isPro && !r.reminders?.customerWhatsAppBookingSentAt) {
     const msg = buildCustomerBookingMessage({
@@ -146,6 +141,12 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   } else if (!isPro) {
     results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
   }
+
+  console.log('[whatsapp][booking][done]', {
+    reservationId: String(r._id),
+    customerResult: results.customer,
+    businessResult: results.business,
+  });
 
   return { ok: true, results };
 }
