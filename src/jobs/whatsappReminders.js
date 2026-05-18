@@ -11,6 +11,7 @@ const {
   resolveBusinessPhone,
   resolveCustomerPhone,
 } = require('../services/whatsappReservationNotify');
+const { waLog } = require('../utils/whatsappLog');
 
 function parseTimeToMinutes(timeStr) {
   const m = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -59,12 +60,21 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
 
   const proBusinessIds = proSubs.map((s) => s.businessId);
   if (!proBusinessIds.length) {
-    console.log(
-      '[jobs][whatsapp-reminders] PRO işletme yok — yaklaşan randevu hatırlatması atlandı. ' +
-        'Yeni randevu bildirimi randevu oluşturulunca (POST /reservations) anlık gider; işletme için PRO şartı yoktur.'
+    waLog(
+      '⏰',
+      'CRON hatırlatma — PRO işletme yok (reason: no_pro_businesses). Bu ANLIK yeni randevu bildirimi DEĞİL.',
+      {
+        hint: 'Anlık bildirim için konsolda 🆕 [WA] veya 🔔 [WA] arayın (randevu oluşturulunca)',
+        proPriceIdsConfigured: proPriceIds.length,
+      }
     );
     return { ok: true, scanned: 0, sent: 0, skipped: 0, reason: 'no_pro_businesses' };
   }
+
+  waLog('⏰', 'CRON hatırlatma job başladı (yaklaşan randevular)', {
+    proBusinessCount: proBusinessIds.length,
+    lookaheadMinutes,
+  });
 
   const candidates = await Reservation.find({
     businessId: { $in: proBusinessIds },

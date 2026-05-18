@@ -11,6 +11,7 @@ const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('..
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
+const { waLog } = require('../utils/whatsappLog');
 
 /**
  * Calculate end time from start time and duration
@@ -141,8 +142,12 @@ exports.createReservation = asyncHandler(async (req, res) => {
       ? String(req.user.phone).trim()
       : undefined;
   // Anlık WhatsApp (işletme + PRO ise müşteri) — API yanıtını bekletmez
+  waLog('🔔', 'Randevu oluşturuldu — anlık WhatsApp tetikleniyor', {
+    reservationId: String(reservation._id),
+    businessId: String(businessId),
+  });
   void sendReservationBookingWhatsApp(reservation._id, { customerPhoneHint: customerPhoneForWa }).catch(
-    (err) => console.error('[whatsapp][booking]', err?.message || err)
+    (err) => waLog('💥', 'Anlık WhatsApp beklenmeyen hata', { message: err?.message || String(err) })
   );
 
   return success(res, 201, reservation, 'Reservation created successfully.');

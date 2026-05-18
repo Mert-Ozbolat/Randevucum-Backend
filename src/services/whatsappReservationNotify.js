@@ -11,6 +11,7 @@ const {
   buildCustomerBookingMessage,
   buildBusinessBookingMessage,
 } = require('./whatsappReservationMessages');
+const { waLog } = require('../utils/whatsappLog');
 
 async function isBusinessPro(businessId) {
   const { planKey, isActive } = await getActivePlanForBusiness(businessId);
@@ -52,6 +53,11 @@ function businessReservationsPanelUrl() {
  * - Müşteri: yalnızca PRO işletmeler
  */
 async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint } = {}) {
+  waLog('🆕', 'ANLIK randevu bildirimi başladı (POST /reservations)', {
+    reservationId: String(reservationId),
+    whatsappEnabled: isWhatsAppEnabled(),
+  });
+
   const r = await Reservation.findById(reservationId)
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
@@ -59,7 +65,10 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     .populate('customerId', 'firstName lastName phone')
     .lean();
 
-  if (!r) return { ok: false, reason: 'reservation_not_found' };
+  if (!r) {
+    waLog('⚠️', 'Randevu bulunamadı — bildirim iptal', { reservationId: String(reservationId) });
+    return { ok: false, reason: 'reservation_not_found' };
+  }
 
   const businessId = r.businessId?._id || r.businessId;
   const business = r.businessId;
@@ -83,7 +92,16 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const isPro = businessId ? await isBusinessPro(businessId) : false;
 
   // İşletme — anlık (PRO şartı yok)
-  if (!r.reminders?.businessWhatsAppBookingSentAt && businessPhone) {
+  if (r.reminders?.businessWhatsAppBookingSentAt) {
+    results.business = { ok: true, skipped: true, reason: 'already_sent' };
+    waLog('⏭️', 'İşletme anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
+  } else if (!businessPhone) {
+    results.business = { ok: false, skipped: true, reason: 'no_business_phone' };
+    waLog('📵', 'İşletme telefonu yok — anlık bildirim atlandı', {
+      reservationId: String(r._id),
+      hint: 'İşletme formunda veya işletme sahibi profilinde telefon tanımlayın',
+    });
+  } else if (businessPhone) {
     const msg = buildBusinessBookingMessage({
       customerName,
       customerPhone: customerPhone || '',
@@ -105,20 +123,22 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
         { $set: { 'reminders.businessWhatsAppBookingSentAt': new Date() } }
       );
     }
-  } else if (!businessPhone) {
-    results.business = { ok: false, skipped: true, reason: 'no_business_phone' };
   }
 
-  console.log('[whatsapp][booking]', {
+  waLog(results.business?.ok ? '✅' : results.business?.skipped ? '⏭️' : '❌', 'İşletme anlık bildirimi özeti', {
     reservationId: String(r._id),
-    whatsappEnabled: isWhatsAppEnabled(),
-    businessPhone: businessPhone ? 'set' : 'missing',
-    businessResult: results.business,
     isPro,
+    businessResult: results.business,
   });
 
   // Müşteri — PRO işletmeler
-  if (isPro && !r.reminders?.customerWhatsAppBookingSentAt) {
+  if (!isPro) {
+    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
+    waLog('💎', 'Müşteri anlık bildirimi atlandı — işletme PRO değil', { reservationId: String(r._id) });
+  } else if (r.reminders?.customerWhatsAppBookingSentAt) {
+    results.customer = { ok: true, skipped: true, reason: 'already_sent' };
+    waLog('⏭️', 'Müşteri anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
+  } else if (isPro && !r.reminders?.customerWhatsAppBookingSentAt) {
     const msg = buildCustomerBookingMessage({
       businessName: business?.name || 'İşletme',
       dateKey,
@@ -138,11 +158,13 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
         { $set: { 'reminders.customerWhatsAppBookingSentAt': new Date() } }
       );
     }
-  } else if (!isPro) {
-    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
+    waLog(results.customer?.ok ? '✅' : '❌', 'Müşteri anlık bildirimi özeti (PRO)', {
+      reservationId: String(r._id),
+      customerResult: results.customer,
+    });
   }
 
-  console.log('[whatsapp][booking][done]', {
+  waLog('🏁', 'ANLIK randevu bildirimi tamamlandı', {
     reservationId: String(r._id),
     customerResult: results.customer,
     businessResult: results.business,

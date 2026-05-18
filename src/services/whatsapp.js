@@ -1,4 +1,5 @@
 const { normalizeE164Tr } = require('../utils/phone');
+const { waLog } = require('../utils/whatsappLog');
 
 /**
  * WhatsApp delivery channel.
@@ -119,6 +120,7 @@ async function sendViaTwilio({ toE164, body, tag }) {
 async function sendWhatsApp({ toPhone, body, tag }) {
   const to = normalizeE164Tr(toPhone);
   if (!to) {
+    waLog('📵', 'Geçersiz veya boş telefon — mesaj atlanmadı', { tag, raw: toPhone ? '(var ama normalize edilemedi)' : '(yok)' });
     return { ok: false, skipped: true, reason: 'invalid_phone' };
   }
 
@@ -126,14 +128,13 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   let provider = getProvider();
 
   if (!enabled) {
-    console.log('[whatsapp][dry-run]', {
+    waLog('📴', 'DRY-RUN — WHATSAPP_ENABLED≠true, Twilio/Meta çağrılmadı', {
       tag,
       to,
       provider,
-      enabled,
-      body,
+      hint: 'Production .env içinde WHATSAPP_ENABLED=true yapın',
     });
-    return { ok: true, dryRun: true };
+    return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
   }
 
   // If the chosen provider is not configured, try the other (Meta still supported).
@@ -146,10 +147,18 @@ async function sendWhatsApp({ toPhone, body, tag }) {
     provider = 'twilio';
   }
 
+  waLog('📤', `Gönderim denemesi (${provider})`, { tag, to });
+
   if (provider === 'twilio') {
-    return await sendViaTwilio({ toE164: to, body, tag });
+    const res = await sendViaTwilio({ toE164: to, body, tag });
+    if (res.ok) waLog('✅', 'Twilio mesaj kuyruğa alındı', { tag, sid: res.sid });
+    else if (!res.skipped) waLog('❌', 'Twilio gönderim hatası', { tag, reason: res.reason, message: res.message });
+    return res;
   }
-  return await sendViaMetaCloud({ toE164: to, body, tag });
+  const res = await sendViaMetaCloud({ toE164: to, body, tag });
+  if (res.ok) waLog('✅', 'Meta mesaj gönderildi', { tag, messageId: res.messageId });
+  else if (!res.skipped) waLog('❌', 'Meta gönderim hatası', { tag, reason: res.reason, message: res.message });
+  return res;
 }
 
 module.exports = { sendWhatsApp, normalizeE164Tr, isEnabled, isTwilioConfigured, isMetaConfigured };
