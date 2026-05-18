@@ -110,6 +110,11 @@ const businessSchema = new mongoose.Schema(
     stripeCustomerId: { type: String, trim: true },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
+    /** Çalışma saatleri sayfasından kaydedildi mi (bilgi formu varsayılanları sayılmaz) */
+    workingHoursConfigured: {
+      type: Boolean,
+      default: false,
+    },
     isActive: {
       type: Boolean,
       default: true,

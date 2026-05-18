@@ -97,10 +97,6 @@ exports.register = asyncHandler(async (req, res) => {
       return error(res, 400, 'Geçersiz telefon numarası.');
     }
   }
-  if (finalRole === ROLES.BUSINESS_OWNER && !phoneE164) {
-    return error(res, 400, 'Telefon işletme hesabı için zorunludur.');
-  }
-
   const user = await User.create({
     email: email.toLowerCase(),
     password,
@@ -219,10 +215,6 @@ exports.googleAuth = asyncHandler(async (req, res) => {
       return error(res, 400, 'Geçersiz telefon numarası.');
     }
   }
-  if (accountType === ROLES.BUSINESS_OWNER && !phoneE164) {
-    return error(res, 400, 'Telefon işletme hesabı için zorunludur.');
-  }
-
   const newUser = await User.create({
     email,
     googleId,

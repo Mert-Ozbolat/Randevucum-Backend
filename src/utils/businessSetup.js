@@ -8,7 +8,15 @@ function hasProfileLocationDone(b) {
   const city = b.address?.city?.trim();
   const district = b.address?.district?.trim();
   const street = b.address?.street?.trim() ?? '';
-  return !!(city || district || street.length >= 5);
+  if (city || district || street.length >= 5) return true;
+  const lat = b.location?.lat;
+  const lng = b.location?.lng;
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    !Number.isNaN(lat) &&
+    !Number.isNaN(lng)
+  );
 }
 
 function isProfileStepDone(b) {
@@ -25,6 +33,7 @@ function isStaffStepDone(staffCount) {
 }
 
 function isWorkingHoursStepDone(b) {
+  if (!b.workingHoursConfigured) return false;
   const wh = b.workingHours;
   if (!wh?.length) return false;
   return wh.some((d) => !d.isClosed);

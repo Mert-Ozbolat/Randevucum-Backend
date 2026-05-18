@@ -54,27 +54,33 @@ function reservationStatusLabelTr(status) {
   return status || '';
 }
 
+function businessReservationsPanelUrl() {
+  const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+  return base ? `${base}/dashboard/business/reservations` : '';
+}
+
 /**
- * Randevu oluşturulunca müşteri + işletmeye WhatsApp (PRO işletmeler).
+ * Randevu oluşturulunca anlık WhatsApp:
+ * - İşletme sahibi: tüm işletmeler (telefon tanımlıysa)
+ * - Müşteri: yalnızca PRO işletmeler
  */
 async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint } = {}) {
   const r = await Reservation.findById(reservationId)
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
+    .populate('staffId', 'name title')
     .populate('customerId', 'firstName lastName phone')
     .lean();
 
   if (!r) return { ok: false, reason: 'reservation_not_found' };
 
   const businessId = r.businessId?._id || r.businessId;
-  if (!businessId || !(await isBusinessPro(businessId))) {
-    return { ok: true, skipped: true, reason: 'not_pro_business' };
-  }
-
   const business = r.businessId;
   const customer = r.customerId;
   const service = r.serviceId;
+  const staff = r.staffId;
   const dateKey = toYmd(r.date);
+  const panelUrl = businessReservationsPanelUrl();
 
   const customerPhone =
     (customerPhoneHint && String(customerPhoneHint).trim()) ||
@@ -84,10 +90,40 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const customerName = customer
     ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
     : '';
+  const staffName = staff?.name || staff?.title || '';
 
   const results = { customer: null, business: null };
+  const isPro = businessId ? await isBusinessPro(businessId) : false;
 
-  if (!r.reminders?.customerWhatsAppBookingSentAt) {
+  // İşletme — anlık (PRO şartı yok)
+  if (!r.reminders?.businessWhatsAppBookingSentAt && businessPhone) {
+    const msg = buildBusinessBookingMessage({
+      customerName,
+      customerPhone: customerPhone || '',
+      dateKey,
+      time: r.time,
+      serviceName: service?.name || 'Hizmet',
+      staffName,
+      panelUrl,
+    });
+    const res = await sendWhatsApp({
+      toPhone: businessPhone,
+      body: msg,
+      tag: `reservation:${r._id}:business:booking`,
+    });
+    results.business = res;
+    if (res.ok) {
+      await Reservation.updateOne(
+        { _id: r._id },
+        { $set: { 'reminders.businessWhatsAppBookingSentAt': new Date() } }
+      );
+    }
+  } else if (!businessPhone) {
+    results.business = { ok: false, skipped: true, reason: 'no_business_phone' };
+  }
+
+  // Müşteri — PRO işletmeler
+  if (isPro && !r.reminders?.customerWhatsAppBookingSentAt) {
     const msg = buildCustomerBookingMessage({
       businessName: business?.name || 'İşletme',
       dateKey,
@@ -107,28 +143,8 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
         { $set: { 'reminders.customerWhatsAppBookingSentAt': new Date() } }
       );
     }
-  }
-
-  if (!r.reminders?.businessWhatsAppBookingSentAt) {
-    const msg = buildBusinessBookingMessage({
-      customerName,
-      customerPhone: customerPhone || '',
-      dateKey,
-      time: r.time,
-      serviceName: service?.name || 'Hizmet',
-    });
-    const res = await sendWhatsApp({
-      toPhone: businessPhone,
-      body: msg,
-      tag: `reservation:${r._id}:business:booking`,
-    });
-    results.business = res;
-    if (res.ok) {
-      await Reservation.updateOne(
-        { _id: r._id },
-        { $set: { 'reminders.businessWhatsAppBookingSentAt': new Date() } }
-      );
-    }
+  } else if (!isPro) {
+    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
   }
 
   return { ok: true, results };

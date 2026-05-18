@@ -76,19 +76,35 @@ function buildCustomerBookingMessage({ businessName, dateKey, time, serviceName,
   return lines.join('\n');
 }
 
-function buildBusinessBookingMessage({ customerName, customerPhone, dateKey, time, serviceName }) {
+function buildBusinessBookingMessage({
+  customerName,
+  customerPhone,
+  dateKey,
+  time,
+  serviceName,
+  staffName,
+  panelUrl,
+}) {
   const lines = [
-    `${waBold('Yeni randevu')} 📋`,
+    `${waBold('Yeni randevunuz var')} 🔔`,
+    '',
+    'Yeni bir randevu alındı. Lütfen inceleyip onaylayın.',
     '',
     waLine('Tarih', formatDateTr(dateKey)),
     waLine('Saat', time),
     waLine('Hizmet', serviceName || 'Hizmet'),
-    waLine('Müşteri', customerName || '—'),
   ];
-  if (customerPhone && String(customerPhone).trim()) {
-    lines.push(waLine('Telefon', customerPhone));
+  if (staffName && String(staffName).trim()) {
+    lines.push(waLine('Personel', staffName));
   }
-  lines.push('', 'Panelden onaylayabilir veya düzenleyebilirsiniz.');
+  lines.push(waLine('Müşteri', customerName || '—'));
+  if (customerPhone && String(customerPhone).trim()) {
+    lines.push(waLine('Müşteri telefon', customerPhone));
+  }
+  if (panelUrl) {
+    lines.push('', `👉 ${waEscape(panelUrl)}`);
+  }
+  lines.push('', 'Bu mesaj randevu oluşturulur oluşturulmaz gönderilmiştir.');
   return lines.join('\n');
 }
 

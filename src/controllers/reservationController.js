@@ -140,7 +140,8 @@ exports.createReservation = asyncHandler(async (req, res) => {
     req.user.phone && String(req.user.phone).trim()
       ? String(req.user.phone).trim()
       : undefined;
-  sendReservationBookingWhatsApp(reservation._id, { customerPhoneHint: customerPhoneForWa }).catch(
+  // Anlık WhatsApp (işletme + PRO ise müşteri) — API yanıtını bekletmez
+  void sendReservationBookingWhatsApp(reservation._id, { customerPhoneHint: customerPhoneForWa }).catch(
     (err) => console.error('[whatsapp][booking]', err?.message || err)
   );
 

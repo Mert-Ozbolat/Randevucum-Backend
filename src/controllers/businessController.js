@@ -73,7 +73,9 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     'email',
     'description',
     'imageUrl',
-    'workingHours', 'breakTimes',
+    'workingHours',
+    'breakTimes',
+    'workingHoursConfigured',
   ];
   if (req.user.role === ROLES.SUPER_ADMIN && req.body.isActive !== undefined) {
     allowed.push('isActive');
@@ -81,6 +83,9 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
   allowed.forEach((key) => {
     if (req.body[key] !== undefined) business[key] = req.body[key];
   });
+  if (req.body.workingHours !== undefined) {
+    business.workingHoursConfigured = true;
+  }
 
   if (!business.businessType && business.profession) {
     business.businessType =
