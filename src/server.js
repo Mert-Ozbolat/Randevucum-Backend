@@ -3,6 +3,9 @@ const path = require("path");
 // Always load backend/.env
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
+const { validateEnv } = require("./config/env");
+validateEnv();
+
 const connectDB = require("./config/db");
 const app = require("./app");
 const { runWhatsAppReminders } = require("./jobs/whatsappReminders");

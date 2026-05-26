@@ -15,40 +15,67 @@ const favoriteRoutes = require('./routes/favoriteRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const stripeController = require('./controllers/stripeController');
-const { error } = require('./utils/response');
+const {
+  helmetMiddleware,
+  buildCorsOptions,
+  globalRateLimiter,
+  authRateLimiter,
+  jsonBodyLimit,
+  hpp,
+  mongoSanitize,
+  requestId,
+  stripSensitiveHeaders,
+  blockSuspiciousQuery,
+  corsErrorHandler,
+} = require('./middleware/security');
+const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 
 const app = express();
+const isProd = process.env.NODE_ENV === 'production';
 
-app.use(cors());
-// Stripe webhook must see raw body for signature verification (before express.json)
+// Cloud Run / reverse proxy — doğru IP ve rate limit için
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+app.disable('x-powered-by');
+
+app.use(requestId);
+app.use(stripSensitiveHeaders);
+app.use(helmetMiddleware);
+app.use(cors(buildCorsOptions()));
+app.use(corsErrorHandler);
+
+// Stripe webhook — ham gövde (imza doğrulama)
 app.post(
   '/payments/stripe/webhook',
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json', limit: '1mb' }),
   stripeController.stripeWebhook
 );
-// Backward/Custom public URL: https://api.randevucum.online/webhook
-app.post('/webhook', express.raw({ type: 'application/json' }), stripeController.stripeWebhook);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.post(
+  '/webhook',
+  express.raw({ type: 'application/json', limit: '1mb' }),
+  stripeController.stripeWebhook
+);
 
-// Health check
+app.use(blockSuspiciousQuery);
+app.use(globalRateLimiter);
+app.use(hpp);
+app.use(express.json({ limit: jsonBodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit, parameterLimit: 50 }));
+app.use(mongoSanitize);
+
 app.get('/health', (req, res) => {
-  const readyState = mongoose?.connection?.readyState; // 0=disconnected,1=connected,2=connecting,3=disconnecting
+  const readyState = mongoose?.connection?.readyState;
   const dbConnected = readyState === 1;
-  const status = dbConnected ? 'ok' : 'degraded';
-
+  if (isProd) {
+    return res.status(dbConnected ? 200 : 503).json({ status: dbConnected ? 'ok' : 'degraded' });
+  }
   res.status(dbConnected ? 200 : 503).json({
-    status,
+    status: dbConnected ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
-    db: {
-      connected: dbConnected,
-      readyState,
-    },
+    db: { connected: dbConnected, readyState },
   });
 });
 
-// API routes
-app.use('/auth', authRoutes);
+app.use('/auth', authRateLimiter, authRoutes);
 app.use('/business', businessRoutes);
 app.use('/api', apiCategoryRoutes);
 app.use('/services', serviceRoutes);
@@ -62,20 +89,7 @@ app.use('/favorites', favoriteRoutes);
 app.use('/stats', statsRoutes);
 app.use('/upload', uploadRoutes);
 
-// 404
-app.use((req, res) => {
-  error(res, 404, `Route ${req.method} ${req.originalUrl} not found`);
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  const statusCode = err.statusCode || 500;
-  const message = err.isOperational ? err.message : 'Internal server error';
-  res.status(statusCode).json({
-    status: 'error',
-    message,
-  });
-});
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 module.exports = app;

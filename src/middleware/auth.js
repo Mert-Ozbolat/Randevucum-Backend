@@ -17,8 +17,10 @@ const protect = async (req, res, next) => {
       return error(res, 401, 'Not authorized. Please login.');
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('+password');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      algorithms: ['HS256'],
+    });
+    const user = await User.findById(decoded.id);
     if (!user) {
       return error(res, 401, 'User no longer exists.');
     }
@@ -63,7 +65,7 @@ const optionalAuth = async (req, res, next) => {
     }
     if (!token) return next();
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const user = await User.findById(decoded.id);
     if (user && user.isActive) req.user = user;
     next();
