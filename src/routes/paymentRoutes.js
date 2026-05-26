@@ -5,6 +5,8 @@ const stripeController = require('../controllers/stripeController');
 
 const router = express.Router();
 
+router.get('/stripe/plans', stripeController.getPublicPlans);
+
 router.get(
   '/stripe/config',
   protect,

@@ -9,9 +9,11 @@ const {
   resolveCheckoutPlans,
   resolveFrontendBaseUrl,
   resolveProPriceIds,
+  getPublicPlansCatalog,
 } = require('../config/stripe');
 const {
   clearBillingFailure,
+  getBusinessBilling,
   startPaymentGracePeriod,
   suspendBusinessBilling,
 } = require('../utils/subscriptionBilling');
@@ -116,9 +118,19 @@ async function resolveBusinessIdFromStripeSubscription(sub) {
 /**
  * GET /payments/stripe/config — Authenticated; tells UI if Checkout is available.
  */
+exports.getPublicPlans = asyncHandler(async (req, res) => {
+  const plans = await getPublicPlansCatalog();
+  const stripe = getStripe();
+  return success(res, 200, {
+    plans,
+    checkoutEnabled: Boolean(stripe && plans.length > 0),
+    trialDays: Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '30', 10) || 30),
+  }, 'OK');
+});
+
 exports.getStripeConfig = asyncHandler(async (req, res) => {
   const stripe = getStripe();
-  const plans = resolveCheckoutPlans();
+  const plans = await getPublicPlansCatalog();
   const checkoutEnabled = Boolean(stripe && plans.length > 0);
   return success(
     res,
@@ -127,6 +139,7 @@ exports.getStripeConfig = asyncHandler(async (req, res) => {
       checkoutEnabled,
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
       plans,
+      trialDays: Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '30', 10) || 30),
     },
     'OK'
   );
@@ -165,7 +178,7 @@ exports.createBillingPortalSession = asyncHandler(async (req, res) => {
  */
 exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const stripe = getStripe();
-  const plans = resolveCheckoutPlans();
+  const plans = await resolveCheckoutPlans();
   const allowed = new Set(plans.map((p) => p.priceId));
   const requested = (req.body.priceId || '').trim();
   const fallback = plans[0]?.priceId || '';
@@ -190,6 +203,15 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   if (!business) return error(res, 404, 'Business not found.');
   if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
     return error(res, 403, 'You do not own this business.');
+  }
+
+  const billing = await getBusinessBilling(businessId);
+  if (billing.isTrial && billing.isActive && !billing.stripeSubscriptionId) {
+    return error(
+      res,
+      403,
+      'Ücretsiz PRO deneme süreniz devam ediyor. Paket satın almak için deneme bitene kadar bekleyin; bu sürede tüm PRO özelliklerini kullanabilirsiniz.'
+    );
   }
 
   const base = resolveFrontendBaseUrl();

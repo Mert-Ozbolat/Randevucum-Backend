@@ -23,6 +23,11 @@ exports.subscribe = asyncHandler(async (req, res) => {
     return error(res, 403, 'You do not own this business.');
   }
 
+  const billing = await getBusinessBilling(businessId);
+  if (billing.isTrial && billing.isActive && !billing.stripeSubscriptionId) {
+    return error(res, 403, 'Deneme süresindesiniz; demo abonelik deneme bitene kadar başlatılamaz.');
+  }
+
   const now = new Date();
   const endDate = new Date(now.getTime() + MONTH_MS);
 
