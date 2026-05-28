@@ -14,6 +14,7 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const ultramsgWebhookRoutes = require('./routes/ultramsgWebhookRoutes');
 const stripeController = require('./controllers/stripeController');
 const {
   helmetMiddleware,
@@ -95,6 +96,7 @@ app.use('/reservations', reservationRoutes);
 app.use('/subscription', subscriptionRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/jobs', jobRoutes);
+app.use('/whatsapp/webhook', ultramsgWebhookRoutes);
 app.use('/reviews', reviewRoutes);
 app.use('/favorites', favoriteRoutes);
 app.use('/stats', statsRoutes);

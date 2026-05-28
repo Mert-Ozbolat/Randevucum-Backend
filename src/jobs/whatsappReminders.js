@@ -6,6 +6,7 @@ const {
   toYmd,
   buildCustomerReminderMessage,
   buildBusinessReminderMessage,
+  buildCustomerReminderRsvpMessage,
 } = require('../services/whatsappReservationMessages');
 const {
   resolveBusinessPhone,
@@ -78,7 +79,8 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
 
   const candidates = await Reservation.find({
     businessId: { $in: proBusinessIds },
-    status: { $in: ['pending', 'approved'] },
+    // Reminders should be for confirmed appointments only.
+    status: 'approved',
     $or: [
       { 'reminders.customerWhatsAppSentAt': null },
       { 'reminders.businessWhatsAppSentAt': null },
@@ -120,11 +122,12 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
 
     if (!r.reminders?.customerWhatsAppSentAt) {
       anyAttempt = true;
-      const msg = buildCustomerReminderMessage({
+      const msg = buildCustomerReminderRsvpMessage({
         businessName: business?.name || 'İşletme',
         dateKey,
         time: r.time,
         serviceName: service?.name || 'Hizmet',
+        rsvpCode: String(r._id).slice(-6).toUpperCase(),
       });
       const res = await sendWhatsApp({
         toPhone: customerPhone,

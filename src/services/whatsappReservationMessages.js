@@ -44,6 +44,44 @@ function buildCustomerReminderMessage({ businessName, dateKey, time, serviceName
   return lines.join('\n');
 }
 
+function buildCustomerReminderRsvpMessage({ businessName, dateKey, time, serviceName, rsvpCode }) {
+  const code = waEscape(rsvpCode || '');
+  const lines = [
+    `${waBold('Randevu hatırlatması')} 🔔`,
+    '',
+    waLine('İşletme', businessName || 'İşletme'),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    '',
+    `${waBold('Geliyor musunuz?')}`,
+    '',
+    `✅ Geliyorum: ${waBold(`ONAY ${code}`)}`,
+    `❌ İptal: ${waBold(`IPTAL ${code}`)} (iptal için 2. adımda onay isteyeceğiz)`,
+    '',
+    'Not: Yanıtınız işletmeye bildirilecektir.',
+  ];
+  return lines.join('\n');
+}
+
+function buildCustomerCancelConfirmMessage({ businessName, dateKey, time, serviceName, rsvpCode }) {
+  const code = waEscape(rsvpCode || '');
+  const lines = [
+    `${waBold('İptal onayı')} ⚠️`,
+    '',
+    waLine('İşletme', businessName || 'İşletme'),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    '',
+    'Randevunuzu iptal etmek istediğinizi anladım.',
+    '',
+    `Eminseniz şu mesajı gönderin: ${waBold(`IPTAL-ONAY ${code}`)}`,
+    `Vazgeçmek için: ${waBold(`ONAY ${code}`)}`,
+  ];
+  return lines.join('\n');
+}
+
 function buildBusinessReminderMessage({ customerName, customerPhone, dateKey, time, serviceName }) {
   const lines = [
     `${waBold('Yaklaşan randevu')} 📅`,
@@ -60,6 +98,21 @@ function buildBusinessReminderMessage({ customerName, customerPhone, dateKey, ti
   return lines.join('\n');
 }
 
+function buildBusinessCustomerRsvpMessage({ customerName, dateKey, time, serviceName, rsvp, businessName }) {
+  const rsvpLabel = rsvp === 'confirmed' ? 'Geliyor' : rsvp === 'canceled' ? 'İptal etti / gelmeyecek' : '—';
+  const lines = [
+    `${waBold('Müşteri yanıtı')} 💬`,
+    '',
+    waLine('İşletme', businessName || ''),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    waLine('Müşteri', customerName || '—'),
+    waLine('Yanıt', rsvpLabel),
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 function buildCustomerBookingMessage({ businessName, dateKey, time, serviceName, statusLabel }) {
   const lines = [
     `${waBold('Randevunuz alındı')} ✅`,
@@ -73,6 +126,20 @@ function buildCustomerBookingMessage({ businessName, dateKey, time, serviceName,
     lines.push(waLine('Durum', statusLabel));
   }
   lines.push('', 'Randevu detaylarını panelinizden takip edebilirsiniz.');
+  return lines.join('\n');
+}
+
+function buildCustomerApprovedMessage({ businessName, dateKey, time, serviceName }) {
+  const lines = [
+    `${waBold('Randevunuz onaylandı')} ✅`,
+    '',
+    waLine('İşletme', businessName || 'İşletme'),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    '',
+    'Randevu saatinizde sizi bekliyoruz. Görüşmek üzere! ✨',
+  ];
   return lines.join('\n');
 }
 
@@ -112,7 +179,11 @@ module.exports = {
   toYmd,
   formatDateTr,
   buildCustomerReminderMessage,
+  buildCustomerReminderRsvpMessage,
+  buildCustomerCancelConfirmMessage,
   buildBusinessReminderMessage,
+  buildBusinessCustomerRsvpMessage,
   buildCustomerBookingMessage,
+  buildCustomerApprovedMessage,
   buildBusinessBookingMessage,
 };

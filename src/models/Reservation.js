@@ -66,6 +66,13 @@ const reservationSchema = new mongoose.Schema(
       customerWhatsAppBookingSentAt: { type: Date, default: null },
       /** Randevu oluşturulunca işletmeye yeni randevu mesajı */
       businessWhatsAppBookingSentAt: { type: Date, default: null },
+      /** Yaklaşan randevu sorusu: müşteri yanıtı (onay/iptal) */
+      customerRsvp: { type: String, enum: ['confirmed', 'canceled'], default: null },
+      customerRsvpAt: { type: Date, default: null },
+      /** İptal 2-aşama: müşteri önce IPTAL <kod> der, sonra IPTAL-ONAY <kod> ile kesinleştirir */
+      cancelConfirmPendingAt: { type: Date, default: null },
+      /** İşletmeye müşteri yanıtı bildirimi atıldı mı */
+      businessRsvpNotifiedAt: { type: Date, default: null },
       /** Last error message (debug) */
       lastError: { type: String, trim: true, default: '' },
     },

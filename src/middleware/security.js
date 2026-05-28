@@ -54,7 +54,8 @@ const globalRateLimiter = rateLimit({
   skip: (req) =>
     req.path === '/health' ||
     req.path === '/payments/stripe/webhook' ||
-    req.path === '/webhook',
+    req.path === '/webhook' ||
+    req.path.startsWith('/whatsapp/webhook'),
 });
 
 const authRateLimiter = rateLimit({

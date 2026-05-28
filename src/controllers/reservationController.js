@@ -11,6 +11,7 @@ const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('..
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
+const { sendReservationApprovedWhatsApp } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
 
 /**
@@ -350,6 +351,11 @@ exports.updateReservationStatus = asyncHandler(async (req, res) => {
     { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
     { path: 'customerId', select: 'firstName lastName email' },
   ]);
+
+  // Müşteriye WhatsApp: sadece onaylandıktan sonra (PRO işletmeler).
+  if (status === RESERVATION_STATUS.APPROVED) {
+    void sendReservationApprovedWhatsApp(reservation._id).catch(() => {});
+  }
   return success(res, 200, reservation, 'Reservation updated.');
 });
 

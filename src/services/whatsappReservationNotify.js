@@ -9,6 +9,7 @@ const {
   buildCustomerReminderMessage,
   buildBusinessReminderMessage,
   buildCustomerBookingMessage,
+  buildCustomerApprovedMessage,
   buildBusinessBookingMessage,
 } = require('./whatsappReservationMessages');
 const { waLog } = require('../utils/whatsappLog');
@@ -131,38 +132,13 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     businessResult: results.business,
   });
 
-  // Müşteri — PRO işletmeler
-  if (!isPro) {
-    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
-    waLog('💎', 'Müşteri anlık bildirimi atlandı — işletme PRO değil', { reservationId: String(r._id) });
-  } else if (r.reminders?.customerWhatsAppBookingSentAt) {
-    results.customer = { ok: true, skipped: true, reason: 'already_sent' };
-    waLog('⏭️', 'Müşteri anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
-  } else if (isPro && !r.reminders?.customerWhatsAppBookingSentAt) {
-    const msg = buildCustomerBookingMessage({
-      businessName: business?.name || 'İşletme',
-      dateKey,
-      time: r.time,
-      serviceName: service?.name || 'Hizmet',
-      statusLabel: reservationStatusLabelTr(r.status),
-    });
-    const res = await sendWhatsApp({
-      toPhone: customerPhone,
-      body: msg,
-      tag: `reservation:${r._id}:customer:booking`,
-    });
-    results.customer = res;
-    if (res.ok) {
-      await Reservation.updateOne(
-        { _id: r._id },
-        { $set: { 'reminders.customerWhatsAppBookingSentAt': new Date() } }
-      );
-    }
-    waLog(results.customer?.ok ? '✅' : '❌', 'Müşteri anlık bildirimi özeti (PRO)', {
-      reservationId: String(r._id),
-      customerResult: results.customer,
-    });
-  }
+  // Müşteri — artık randevu oluşturulunca mesaj gönderme.
+  // İstenilen akış: müşteri mesajı sadece işletme onayladıktan sonra gitsin.
+  results.customer = { ok: true, skipped: true, reason: 'send_on_approval_only' };
+  waLog('⏭️', 'Müşteri anlık bildirimi kapalı — onay sonrası gönderilecek', {
+    reservationId: String(r._id),
+    isPro,
+  });
 
   waLog('🏁', 'ANLIK randevu bildirimi tamamlandı', {
     reservationId: String(r._id),
@@ -173,11 +149,77 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   return { ok: true, results };
 }
 
+/**
+ * İşletme randevuyu onayladıktan sonra müşteriye WhatsApp:
+ * - Yalnızca PRO işletmeler
+ * - Aynı randevu için bir kez
+ */
+async function sendReservationApprovedWhatsApp(reservationId) {
+  waLog('✅', 'ONAY WhatsApp bildirimi başladı (PATCH /reservations/:id/status)', {
+    reservationId: String(reservationId),
+    whatsappEnabled: isWhatsAppEnabled(),
+  });
+
+  const r = await Reservation.findById(reservationId)
+    .populate('businessId', 'name phone ownerId')
+    .populate('serviceId', 'name')
+    .populate('customerId', 'firstName lastName phone')
+    .lean();
+
+  if (!r) return { ok: false, reason: 'reservation_not_found' };
+  if (r.status !== RESERVATION_STATUS.APPROVED) {
+    return { ok: true, skipped: true, reason: 'not_approved' };
+  }
+
+  const businessId = r.businessId?._id || r.businessId;
+  const business = r.businessId;
+  const customer = r.customerId;
+  const service = r.serviceId;
+  const dateKey = toYmd(r.date);
+
+  const isPro = businessId ? await isBusinessPro(businessId) : false;
+  if (!isPro) {
+    return { ok: true, skipped: true, reason: 'not_pro_business' };
+  }
+
+  if (r.reminders?.customerWhatsAppBookingSentAt) {
+    return { ok: true, skipped: true, reason: 'already_sent' };
+  }
+
+  const customerPhone = await resolveCustomerPhone(customer, r.customerId?._id || r.customerId);
+  if (!customerPhone) {
+    return { ok: false, skipped: true, reason: 'no_customer_phone' };
+  }
+
+  const msg = buildCustomerApprovedMessage({
+    businessName: business?.name || 'İşletme',
+    dateKey,
+    time: r.time,
+    serviceName: service?.name || 'Hizmet',
+  });
+
+  const res = await sendWhatsApp({
+    toPhone: customerPhone,
+    body: msg,
+    tag: `reservation:${r._id}:customer:approved`,
+  });
+
+  if (res.ok) {
+    await Reservation.updateOne(
+      { _id: r._id },
+      { $set: { 'reminders.customerWhatsAppBookingSentAt': new Date() } }
+    );
+  }
+
+  return res;
+}
+
 module.exports = {
   isBusinessPro,
   resolveBusinessPhone,
   resolveCustomerPhone,
   sendReservationBookingWhatsApp,
+  sendReservationApprovedWhatsApp,
   buildCustomerReminderMessage,
   buildBusinessReminderMessage,
   toYmd,
