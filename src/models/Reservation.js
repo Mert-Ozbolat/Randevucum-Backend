@@ -60,6 +60,8 @@ const reservationSchema = new mongoose.Schema(
     reminders: {
       /** WhatsApp reminder to customer (end-user) */
       customerWhatsAppSentAt: { type: Date, default: null },
+      /** Exactly 24h before appointment: customer-only reminder */
+      customerWhatsApp24hSentAt: { type: Date, default: null },
       /** WhatsApp reminder to business owner / business phone */
       businessWhatsAppSentAt: { type: Date, default: null },
       /** Randevu oluşturulunca müşteriye onay mesajı */

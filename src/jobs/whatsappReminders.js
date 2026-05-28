@@ -7,6 +7,7 @@ const {
   buildCustomerReminderMessage,
   buildBusinessReminderMessage,
   buildCustomerReminderRsvpMessage,
+  buildCustomer24hReminderMessage,
 } = require('../services/whatsappReservationMessages');
 const {
   resolveBusinessPhone,
@@ -44,6 +45,11 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   );
   const nowMs = now.getTime();
   const horizonMs = nowMs + Math.max(1, lookaheadMinutes) * 60 * 1000;
+  const cronEveryMs = Number(process.env.REMINDER_CRON_EVERY_MS || 300000);
+  const cronSlackMs = Math.max(60 * 1000, cronEveryMs + 15 * 1000);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const target24hFromNowMs = nowMs + dayMs;
+  const horizon24hMs = target24hFromNowMs + cronSlackMs;
 
   const proPriceIds = resolveProPriceIds();
   const proMatch = [{ planKey: 'pro' }];
@@ -83,6 +89,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     status: 'approved',
     $or: [
       { 'reminders.customerWhatsAppSentAt': null },
+      { 'reminders.customerWhatsApp24hSentAt': null },
       { 'reminders.businessWhatsAppSentAt': null },
       { reminders: { $exists: false } },
     ],
@@ -105,7 +112,9 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       continue;
     }
     const t = startAt.getTime();
-    if (t <= nowMs || t > horizonMs) continue;
+    const inSoonWindow = t > nowMs && t <= horizonMs;
+    const in24hWindow = t >= target24hFromNowMs && t <= horizon24hMs;
+    if (!inSoonWindow && !in24hWindow) continue;
     matchedWindow += 1;
 
     const business = r.businessId;
@@ -120,7 +129,42 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     const customerPhone = await resolveCustomerPhone(customer, customerId);
     const businessPhone = await resolveBusinessPhone(business);
 
+    // Exactly ~24h before (customer-only) — send once.
+    if (in24hWindow && !r.reminders?.customerWhatsApp24hSentAt) {
+      anyAttempt = true;
+      const msg = buildCustomer24hReminderMessage({
+        businessName: business?.name || 'İşletme',
+        dateKey,
+        time: r.time,
+        serviceName: service?.name || 'Hizmet',
+      });
+      const res = await sendWhatsApp({
+        toPhone: customerPhone,
+        body: msg,
+        tag: `reservation:${r._id}:customer:reminder_24h`,
+      });
+      sendAttempts.push({
+        reservationId: String(r._id),
+        channel: 'customer',
+        kind: 'reminder_24h',
+        ok: Boolean(res.ok),
+        reason: res.reason || null,
+        message: res.message ? String(res.message).slice(0, 200) : null,
+        dryRun: Boolean(res.dryRun),
+        hasPhone: Boolean(customerPhone),
+      });
+      if (res.ok) {
+        updates['reminders.customerWhatsApp24hSentAt'] = new Date();
+        sent += 1;
+      } else {
+        updates['reminders.lastError'] = `${updates['reminders.lastError'] || ''} customer24h:${res.reason || 'send_failed'}`.trim();
+      }
+    }
+
     if (!r.reminders?.customerWhatsAppSentAt) {
+      if (!inSoonWindow) {
+        // Don't send the "soon" reminder when we're only in the 24h window.
+      } else {
       anyAttempt = true;
       const msg = buildCustomerReminderRsvpMessage({
         businessName: business?.name || 'İşletme',
@@ -150,9 +194,13 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       } else {
         updates['reminders.lastError'] = `customer:${res.reason || 'send_failed'}`;
       }
+      }
     }
 
     if (!r.reminders?.businessWhatsAppSentAt) {
+      if (!inSoonWindow) {
+        // Business reminder is for near-term window only.
+      } else {
       anyAttempt = true;
       const customerName = customer
         ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
@@ -184,6 +232,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         sent += 1;
       } else {
         updates['reminders.lastError'] = `${updates['reminders.lastError'] || ''} business:${res.reason || 'send_failed'}`.trim();
+      }
       }
     }
 

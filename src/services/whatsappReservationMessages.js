@@ -82,6 +82,20 @@ function buildCustomerCancelConfirmMessage({ businessName, dateKey, time, servic
   return lines.join('\n');
 }
 
+function buildCustomer24hReminderMessage({ businessName, dateKey, time, serviceName }) {
+  const lines = [
+    `${waBold('Yarınki randevu hatırlatması')} 📅`,
+    '',
+    waLine('İşletme', businessName || 'İşletme'),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    '',
+    'Randevunuza 24 saat kaldı. Görüşmek üzere! ✨',
+  ];
+  return lines.join('\n');
+}
+
 function buildBusinessReminderMessage({ customerName, customerPhone, dateKey, time, serviceName }) {
   const lines = [
     `${waBold('Yaklaşan randevu')} 📅`,
@@ -181,6 +195,7 @@ module.exports = {
   buildCustomerReminderMessage,
   buildCustomerReminderRsvpMessage,
   buildCustomerCancelConfirmMessage,
+  buildCustomer24hReminderMessage,
   buildBusinessReminderMessage,
   buildBusinessCustomerRsvpMessage,
   buildCustomerBookingMessage,
