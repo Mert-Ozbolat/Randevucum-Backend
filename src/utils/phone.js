@@ -1,5 +1,5 @@
 /**
- * Türkiye telefon numarasını WhatsApp / Twilio uyumlu E.164 formatına çevirir: +905XXXXXXXXX
+ * Türkiye telefon numarasını WhatsApp (UltraMsg / Meta) uyumlu E.164 formatına çevirir: +905XXXXXXXXX
  */
 function normalizeE164Tr(phoneRaw) {
   const raw = String(phoneRaw || '').trim();

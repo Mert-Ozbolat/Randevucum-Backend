@@ -3,17 +3,16 @@ const { waLog } = require('../utils/whatsappLog');
 
 /**
  * WhatsApp delivery channel.
- * Default is Twilio (`twilio`). Set WHATSAPP_PROVIDER=meta for Meta Cloud API.
+ * Default is UltraMsg (`ultramsg`). Alternatives: `meta` (Cloud API).
  */
 function getProvider() {
-  return String(process.env.WHATSAPP_PROVIDER || 'twilio').trim().toLowerCase(); // twilio | meta
+  return String(process.env.WHATSAPP_PROVIDER || 'ultramsg').trim().toLowerCase();
 }
 
-function isTwilioConfigured() {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_WHATSAPP_FROM;
-  return Boolean(sid && token && from);
+function isUltraMsgConfigured() {
+  const instanceId = String(process.env.ULTRAMSG_INSTANCE_ID || '').trim();
+  const token = String(process.env.ULTRAMSG_TOKEN || '').trim();
+  return Boolean(instanceId && token);
 }
 
 function isMetaConfigured() {
@@ -24,62 +23,111 @@ function isEnabled() {
   return String(process.env.WHATSAPP_ENABLED || '').toLowerCase() === 'true';
 }
 
-/** Twilio WhatsApp sık hata kodları — Cloud Run loglarında teşhis */
-function twilioDeliveryHint(errorCode, errorMessage) {
-  const code = Number(errorCode);
-  if (code === 63015) {
-    return 'Alıcı Twilio WhatsApp sandbox\'a join olmamış. Twilio Console → Sandbox → join kodunu +905... hattından sandbox numarasına gönderin.';
+function ultramsgDeliveryHint(errorMessage) {
+  const msg = String(errorMessage || '').toLowerCase();
+  if (msg.includes('wrong token')) {
+    return 'ULTRAMSG_TOKEN yanlış veya eksik. UltraMsg panel → Instance → API token.';
   }
-  if (code === 63016) {
-    return '24 saatlik mesaj penceresi dışında serbest metin gönderilemez. Sandbox\'ta alıcı önce size yazmalı veya onaylı şablon kullanılmalı.';
-  }
-  if (code === 63007) {
-    return 'Alıcı WhatsApp\'ta geçersiz veya kayıtlı değil.';
+  if (msg.includes('not authorized') || msg.includes('instance not')) {
+    return 'WhatsApp instance bağlı değil. UltraMsg panelden QR ile oturum açın; mesaj kuyruğa alınabilir.';
   }
   if (errorMessage) return String(errorMessage);
-  return 'Twilio Console → Messaging → Logs içinde bu SID için Error Code kontrol edin.';
+  return 'UltraMsg panel → Messages / Logs bölümünden mesaj durumunu kontrol edin.';
 }
 
-async function logTwilioDeliveryStatus(client, messageSid, tag, toE164) {
-  const delays = [5000, 15000];
-  for (const ms of delays) {
-    await new Promise((r) => setTimeout(r, ms));
-    try {
-      const msg = await client.messages(messageSid).fetch();
-      const status = msg.status;
-      const errorCode = msg.errorCode;
-      const errorMessage = msg.errorMessage;
+function parseUltraMsgResponse(json) {
+  if (!json || typeof json !== 'object') {
+    return { ok: false, message: 'Invalid UltraMsg response' };
+  }
+  if (json.error) {
+    return { ok: false, message: String(json.error) };
+  }
+  const sent = json.sent;
+  const accepted =
+    sent === true ||
+    sent === 'true' ||
+    sent === 1 ||
+    sent === '1' ||
+    String(json.message || '').toLowerCase() === 'ok';
+  if (accepted) {
+    return { ok: true, messageId: json.id ?? json.messageId ?? null, queued: sent === 'queue' || json.queued === true };
+  }
+  const message = json.message || json.description || 'UltraMsg rejected the message';
+  return { ok: false, message: String(message) };
+}
 
-      if (status === 'delivered' || status === 'read') {
-        waLog('📬', 'WhatsApp teslim edildi', { tag, sid: messageSid, to: toE164, status });
-        return;
-      }
-      if (status === 'failed' || status === 'undelivered') {
-        waLog('📵', 'WhatsApp teslim EDİLEMEDİ (API ok ama telefona düşmedi)', {
-          tag,
-          sid: messageSid,
-          to: toE164,
-          status,
-          errorCode: errorCode || null,
-          errorMessage: errorMessage || null,
-          hint: twilioDeliveryHint(errorCode, errorMessage),
-        });
-        return;
-      }
-      if (ms === delays[delays.length - 1]) {
-        waLog('⏳', `Twilio hâlâ ${status} — Twilio Console'da SID kontrol edin`, {
-          tag,
-          sid: messageSid,
-          to: toE164,
-          status,
-          errorCode: errorCode || null,
-          hint: 'Sandbox kullanıyorsanız her alıcı (+905338215466, +905338811368) join kodu göndermiş olmalı.',
-        });
-      }
-    } catch (e) {
-      waLog('⚠️', 'Twilio teslimat sorgusu hatası', { tag, sid: messageSid, message: e?.message || String(e) });
-      return;
+async function sendViaUltraMsg({ toE164, body, tag }) {
+  if (!isUltraMsgConfigured()) {
+    return { ok: false, skipped: true, reason: 'ultramsg_not_configured' };
+  }
+
+  const instanceId = String(process.env.ULTRAMSG_INSTANCE_ID || '').trim();
+  const token = String(process.env.ULTRAMSG_TOKEN || '').trim();
+  const priority = Number(process.env.ULTRAMSG_PRIORITY ?? 5);
+  const referenceId = String(process.env.ULTRAMSG_REFERENCE_PREFIX || 'randevucum')
+    .trim()
+    .concat('-', tag || 'msg', '-', Date.now());
+
+  const url = `https://api.ultramsg.com/${encodeURIComponent(instanceId)}/messages/chat`;
+  const form = new URLSearchParams({
+    token,
+    to: toE164,
+    body,
+    priority: String(Number.isFinite(priority) ? priority : 5),
+    referenceId,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    });
+
+    const raw = await res.text();
+    let json = {};
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch {
+      json = { error: raw || `HTTP ${res.status}` };
     }
+
+    if (!res.ok) {
+      const message =
+        json?.error ||
+        json?.message ||
+        (typeof raw === 'string' && raw.trim() ? raw.trim() : `UltraMsg HTTP ${res.status}`);
+      console.error('[whatsapp][ultramsg] send failed', { tag, status: res.status, message });
+      return {
+        ok: false,
+        reason: 'ultramsg_send_failed',
+        message: String(message),
+        status: res.status,
+        hint: ultramsgDeliveryHint(message),
+      };
+    }
+
+    const parsed = parseUltraMsgResponse(json);
+    if (!parsed.ok) {
+      console.error('[whatsapp][ultramsg] rejected', { tag, json });
+      return {
+        ok: false,
+        reason: 'ultramsg_rejected',
+        message: parsed.message,
+        hint: ultramsgDeliveryHint(parsed.message),
+      };
+    }
+
+    return {
+      ok: true,
+      provider: 'ultramsg',
+      messageId: parsed.messageId,
+      queued: parsed.queued,
+    };
+  } catch (e) {
+    const message = e?.message || String(e);
+    console.error('[whatsapp][ultramsg] request error', { tag, message });
+    return { ok: false, reason: 'ultramsg_request_failed', message };
   }
 }
 
@@ -122,67 +170,25 @@ async function sendViaMetaCloud({ toE164, body, tag }) {
   return { ok: true, provider: 'meta', messageId };
 }
 
-async function sendViaTwilio({ toE164, body, tag }) {
-  if (!isTwilioConfigured()) {
-    return { ok: false, skipped: true, reason: 'twilio_not_configured' };
+function resolveActiveProvider(requested) {
+  const order = ['ultramsg', 'meta'];
+  const configured = {
+    ultramsg: isUltraMsgConfigured(),
+    meta: isMetaConfigured(),
+  };
+
+  if (configured[requested]) return requested;
+
+  const fallback = order.find((p) => configured[p]);
+  if (fallback) {
+    console.warn(`[whatsapp] WHATSAPP_PROVIDER=${requested} not configured; falling back to ${fallback}.`);
+    return fallback;
   }
-
-  // eslint-disable-next-line global-require, import/no-extraneous-dependencies
-  const twilio = require('twilio');
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = String(process.env.TWILIO_WHATSAPP_FROM || '').trim();
-
-  const client = twilio(sid, token);
-  const to = toE164.startsWith('+') ? `whatsapp:${toE164}` : `whatsapp:+${toE164.replace(/^\+/, '')}`;
-
-  const fromBare = from.replace(/^whatsapp:/i, '').trim();
-  const fromE164 = normalizeE164Tr(fromBare);
-  if (fromE164 && fromE164 === toE164) {
-    return {
-      ok: false,
-      skipped: true,
-      reason: 'twilio_same_to_from',
-      message:
-        'Twilio: Gönderen (TWILIO_WHATSAPP_FROM) ile alıcı numara aynı olamaz. FROM alanı Twilio konsolundaki WhatsApp sandbox / onaylı gönderen olmalı (genelde +1...), alıcı ise müşteri veya işletme hattı (+90...) olmalı.',
-    };
-  }
-
-  try {
-    const msg = await client.messages.create({
-      from,
-      to,
-      body,
-    });
-    const initialStatus = msg.status || 'unknown';
-    void logTwilioDeliveryStatus(client, msg.sid, tag, toE164);
-    return {
-      ok: true,
-      provider: 'twilio',
-      sid: msg.sid,
-      twilioStatus: initialStatus,
-      errorCode: msg.errorCode || null,
-      errorMessage: msg.errorMessage || null,
-    };
-  } catch (e) {
-    const message = e?.message || String(e);
-    const code = e?.code;
-    console.error('[whatsapp][twilio] send failed', { tag, message, code });
-    if (/could not find a channel with the specified from address/i.test(message)) {
-      return {
-        ok: false,
-        reason: 'twilio_invalid_from',
-        message:
-          'Twilio: TWILIO_WHATSAPP_FROM bu hesapta WhatsApp gönderen olarak tanımlı değil. Twilio Console → Messaging → WhatsApp sandbox’taki tam "From" değerini kopyala (örn. whatsapp:+14155238886). Kendi +90 hattını FROM yapma.',
-        code,
-      };
-    }
-    return { ok: false, reason: 'twilio_send_failed', message, code };
-  }
+  return requested;
 }
 
 /**
- * Send a WhatsApp text message (reminders, etc.).
+ * Send a WhatsApp text message (reminders, booking notifications, etc.).
  * When WHATSAPP_ENABLED is not true, logs only (dry-run).
  */
 async function sendWhatsApp({ toPhone, body, tag }) {
@@ -193,10 +199,10 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   }
 
   const enabled = isEnabled();
-  let provider = getProvider();
+  let provider = resolveActiveProvider(getProvider());
 
   if (!enabled) {
-    waLog('📴', 'DRY-RUN — WHATSAPP_ENABLED≠true, Twilio/Meta çağrılmadı', {
+    waLog('📴', 'DRY-RUN — WHATSAPP_ENABLED≠true, API çağrılmadı', {
       tag,
       to,
       provider,
@@ -205,46 +211,61 @@ async function sendWhatsApp({ toPhone, body, tag }) {
     return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
   }
 
-  // If the chosen provider is not configured, try the other (Meta still supported).
-  if (provider === 'twilio' && !isTwilioConfigured() && isMetaConfigured()) {
-    console.warn('[whatsapp] WHATSAPP_PROVIDER=twilio but Twilio env missing; falling back to Meta.');
+  if (provider === 'ultramsg' && !isUltraMsgConfigured() && isMetaConfigured()) {
     provider = 'meta';
+  } else if (provider === 'meta' && !isMetaConfigured() && isUltraMsgConfigured()) {
+    provider = 'ultramsg';
   }
-  if (provider === 'meta' && !isMetaConfigured() && isTwilioConfigured()) {
-    console.warn('[whatsapp] WHATSAPP_PROVIDER=meta but Meta env missing; falling back to Twilio.');
-    provider = 'twilio';
+
+  if (provider === 'ultramsg' && !isUltraMsgConfigured() && !isMetaConfigured()) {
+    waLog('❌', 'WhatsApp yapılandırılmamış', {
+      tag,
+      hint: 'ULTRAMSG_INSTANCE_ID + ULTRAMSG_TOKEN veya Meta WHATSAPP_CLOUD_TOKEN ayarlayın',
+    });
+    return { ok: false, skipped: true, reason: 'whatsapp_not_configured' };
   }
 
   waLog('📤', `Gönderim denemesi (${provider})`, { tag, to });
 
-  if (provider === 'twilio') {
-    const res = await sendViaTwilio({ toE164: to, body, tag });
+  if (provider === 'ultramsg') {
+    const res = await sendViaUltraMsg({ toE164: to, body, tag });
     if (res.ok) {
-      waLog('✅', 'Twilio API kabul etti (henüz teslimat garantisi yok)', {
+      waLog(res.queued ? '⏳' : '✅', res.queued ? 'UltraMsg kuyruğa aldı (instance hazır olunca gider)' : 'UltraMsg mesaj gönderildi', {
         tag,
-        sid: res.sid,
-        twilioStatus: res.twilioStatus,
         to,
-        note: '5–15 sn sonra 📬 veya 📵 logu gelir — telefonda yoksa 📵 satırına bakın',
+        messageId: res.messageId,
+        queued: Boolean(res.queued),
       });
-      if (res.errorCode || res.twilioStatus === 'failed') {
-        waLog('📵', 'Twilio anında hata döndü', {
-          tag,
-          sid: res.sid,
-          errorCode: res.errorCode,
-          errorMessage: res.errorMessage,
-          hint: twilioDeliveryHint(res.errorCode, res.errorMessage),
-        });
-      }
     } else if (!res.skipped) {
-      waLog('❌', 'Twilio gönderim hatası', { tag, reason: res.reason, message: res.message });
+      waLog('❌', 'UltraMsg gönderim hatası', {
+        tag,
+        reason: res.reason,
+        message: res.message,
+        hint: res.hint || ultramsgDeliveryHint(res.message),
+      });
     }
     return res;
   }
-  const res = await sendViaMetaCloud({ toE164: to, body, tag });
-  if (res.ok) waLog('✅', 'Meta mesaj gönderildi', { tag, messageId: res.messageId });
-  else if (!res.skipped) waLog('❌', 'Meta gönderim hatası', { tag, reason: res.reason, message: res.message });
-  return res;
+
+  if (provider === 'meta') {
+    const res = await sendViaMetaCloud({ toE164: to, body, tag });
+    if (res.ok) waLog('✅', 'Meta mesaj gönderildi', { tag, messageId: res.messageId });
+    else if (!res.skipped) waLog('❌', 'Meta gönderim hatası', { tag, reason: res.reason, message: res.message });
+    return res;
+  }
+
+  waLog('❌', 'Bilinmeyen WHATSAPP_PROVIDER', {
+    tag,
+    provider,
+    hint: 'ultramsg veya meta kullanın (WHATSAPP_PROVIDER=ultramsg)',
+  });
+  return { ok: false, reason: 'unknown_provider', provider };
 }
 
-module.exports = { sendWhatsApp, normalizeE164Tr, isEnabled, isTwilioConfigured, isMetaConfigured };
+module.exports = {
+  sendWhatsApp,
+  normalizeE164Tr,
+  isEnabled,
+  isUltraMsgConfigured,
+  isMetaConfigured,
+};
