@@ -36,12 +36,23 @@ const isProd = process.env.NODE_ENV === 'production';
 // Cloud Run / reverse proxy — doğru IP ve rate limit için
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.disable('x-powered-by');
+// API responses are dynamic; avoid ETag-based 304 issues in clients (Axios/XHR).
+app.set('etag', false);
 
 app.use(requestId);
 app.use(stripSensitiveHeaders);
 app.use(helmetMiddleware);
 app.use(cors(buildCorsOptions()));
 app.use(corsErrorHandler);
+
+// Prevent browser/proxy caching for JSON API endpoints.
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
+  next();
+});
 
 // Stripe webhook — ham gövde (imza doğrulama)
 app.post(
