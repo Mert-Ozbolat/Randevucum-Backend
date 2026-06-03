@@ -10,6 +10,7 @@ const {
   PROFESSION_TO_BUSINESS_TYPE,
 } = require('../config/areaProfessionData');
 const { loadSetupContext, syncBusinessPublicActivation } = require('../utils/businessSetup');
+const { normalizePhoneForDatabase } = require('../utils/phone');
 
 /**
  * POST /business - Create business (BusinessOwner only)
@@ -26,11 +27,16 @@ exports.createBusiness = asyncHandler(async (req, res) => {
     req.body.businessType = PROFESSION_TO_BUSINESS_TYPE[profession] || 'other';
   }
 
-  const business = await Business.create({
-    ...req.body,
-    ownerId,
-    isActive: false,
-  });
+  const payload = { ...req.body, ownerId, isActive: false };
+  if (payload.phone !== undefined) {
+    const normalized = normalizePhoneForDatabase(payload.phone, { emptyValue: '' });
+    if (normalized === null) {
+      return error(res, 400, 'Geçerli bir işletme telefon numarası girin.');
+    }
+    payload.phone = normalized || '';
+  }
+
+  const business = await Business.create(payload);
 
   const trialDays = Math.max(1, parseInt(process.env.BUSINESS_TRIAL_DAYS || '30', 10) || 30);
   const startDate = new Date();
@@ -82,8 +88,17 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
   if (req.user.role === ROLES.SUPER_ADMIN && req.body.isActive !== undefined) {
     allowed.push('isActive');
   }
+  if (req.body.phone !== undefined) {
+    const normalized = normalizePhoneForDatabase(req.body.phone, { emptyValue: '' });
+    if (normalized === null) {
+      return error(res, 400, 'Geçerli bir işletme telefon numarası girin.');
+    }
+    business.phone = normalized || '';
+  }
+
   allowed.forEach((key) => {
-    if (req.body[key] !== undefined) business[key] = req.body[key];
+    if (key === 'phone' || req.body[key] === undefined) return;
+    business[key] = req.body[key];
   });
   if (req.body.workingHours !== undefined) {
     business.workingHoursConfigured = true;
@@ -194,14 +209,19 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
   }
   if (and.length) filter.$and = and;
 
-  if (ownerId) filter.ownerId = ownerId;
-  const isOwnerListingOwn =
-    req.user?.role === ROLES.BUSINESS_OWNER || req.user?.role === ROLES.SUPER_ADMIN;
-  if (isOwnerListingOwn && req.user?.role === ROLES.BUSINESS_OWNER) {
+  const listMineOnly =
+    req.query.mine === 'true' ||
+    req.query.mine === '1' ||
+    req.query.scope === 'mine';
+
+  if (listMineOnly && req.user?.role === ROLES.BUSINESS_OWNER) {
     filter.ownerId = req.user._id;
+  } else if (ownerId) {
+    filter.ownerId = ownerId;
   } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
-  } else if (!isOwnerListingOwn) {
+  } else {
+    // Public catalog: all active businesses (including when a business owner browses /business)
     filter.isActive = true;
   }
 
@@ -330,13 +350,17 @@ exports.listBusinessesByAreaProfession = asyncHandler(async (req, res) => {
     and.push({ $or: [{ profession }, { subCategory: profession }] });
   }
   if (and.length) filter.$and = and;
-  const isOwnerListingOwn =
-    req.user?.role === ROLES.BUSINESS_OWNER || req.user?.role === ROLES.SUPER_ADMIN;
-  if (isOwnerListingOwn && req.user?.role === ROLES.BUSINESS_OWNER) {
+
+  const listMineOnly =
+    req.query.mine === 'true' ||
+    req.query.mine === '1' ||
+    req.query.scope === 'mine';
+
+  if (listMineOnly && req.user?.role === ROLES.BUSINESS_OWNER) {
     filter.ownerId = req.user._id;
   } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
-  } else if (!isOwnerListingOwn) {
+  } else {
     filter.isActive = true;
   }
 
