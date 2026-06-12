@@ -35,6 +35,8 @@ exports.updateBusinessRules = () => [
   body('isActive').optional().isBoolean(),
   body('description').optional().trim(),
   body('imageUrl').optional().isString(),
+  body('allowConcurrentBookings').optional().isBoolean(),
+  body('concurrentBookingLimit').optional().isInt({ min: 2, max: 50 }),
 ];
 
 exports.getBusinessRules = () => [

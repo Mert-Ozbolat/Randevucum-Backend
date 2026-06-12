@@ -116,6 +116,18 @@ const businessSchema = new mongoose.Schema(
     stripeCustomerId: { type: String, trim: true },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
+    /** Aynı saat diliminde birden fazla randevu (personel sayısından bağımsız üst sınır) */
+    allowConcurrentBookings: {
+      type: Boolean,
+      default: false,
+    },
+    /** allowConcurrentBookings açıkken aynı dilimde en fazla kaç randevu (2–50) */
+    concurrentBookingLimit: {
+      type: Number,
+      default: 2,
+      min: 2,
+      max: 50,
+    },
     /** Çalışma saatleri sayfasından kaydedildi mi (bilgi formu varsayılanları sayılmaz) */
     workingHoursConfigured: {
       type: Boolean,

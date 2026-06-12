@@ -100,6 +100,13 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     if (key === 'phone' || req.body[key] === undefined) return;
     business[key] = req.body[key];
   });
+  if (req.body.allowConcurrentBookings !== undefined) {
+    business.allowConcurrentBookings = Boolean(req.body.allowConcurrentBookings);
+  }
+  if (req.body.concurrentBookingLimit !== undefined) {
+    const n = parseInt(req.body.concurrentBookingLimit, 10);
+    business.concurrentBookingLimit = Math.min(50, Math.max(2, Number.isFinite(n) ? n : 2));
+  }
   if (req.body.workingHours !== undefined) {
     business.workingHoursConfigured = true;
   }
@@ -296,7 +303,7 @@ exports.updateHomeSliderPromo = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /business/:id/home-slider-promo/purchase — Demo: 30 gün slider süresi ekler (üretimde Stripe ile değiştirin)
+ * POST /business/:id/home-slider-promo/purchase — Demo: 7 gün slider süresi ekler (üretimde Stripe ile değiştirin)
  */
 exports.purchaseHomeSliderPromo = asyncHandler(async (req, res) => {
   const business = req.business;
@@ -304,7 +311,8 @@ exports.purchaseHomeSliderPromo = asyncHandler(async (req, res) => {
     return error(res, 404, 'Business not found.');
   }
 
-  const days = Math.min(365, Math.max(1, parseInt(req.body.days || '30', 10) || 30));
+  const defaultDays = Math.max(1, parseInt(process.env.SLIDER_PROMO_DAYS || '7', 10) || 7);
+  const days = Math.min(365, Math.max(1, parseInt(req.body.days || String(defaultDays), 10) || defaultDays));
   const now = new Date();
   const currentEnd = business.homeSliderPromo?.paidUntil;
   const base = currentEnd && currentEnd > now ? currentEnd : now;

@@ -13,6 +13,7 @@ const { ROLES } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
 const { sendReservationApprovedWhatsApp } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
+const { getSlotCapacity } = require('../utils/bookingCapacity');
 
 /**
  * Calculate end time from start time and duration
@@ -91,7 +92,8 @@ exports.createReservation = asyncHandler(async (req, res) => {
   const reservationDate = reservationDayToStoredDate(date);
   if (!reservationDate) return error(res, 400, 'Invalid date.');
 
-  const capacity = await getEligibleStaffCount(businessId, service);
+  const eligibleStaffCount = await getEligibleStaffCount(businessId, service);
+  const capacity = getSlotCapacity(business, eligibleStaffCount);
 
   const nextDay = nextReservationDayStoredDate(reservationDate);
   const overlapQuery = {
@@ -104,7 +106,7 @@ exports.createReservation = asyncHandler(async (req, res) => {
 
   const overlapping = await Reservation.find(overlapQuery).lean();
   if (overlapping.length >= capacity) {
-    return error(res, 409, 'This time slot is fully booked.');
+    return error(res, 409, 'Bu saat dilimi dolu.');
   }
 
   let resolvedStaffId = staffId || null;
@@ -197,7 +199,8 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
     }
   }
 
-  const capacity = await getEligibleStaffCount(businessId, service);
+  const eligibleStaffCount = await getEligibleStaffCount(businessId, service);
+  const capacity = getSlotCapacity(business, eligibleStaffCount);
 
   const slots = getAvailableSlots(
     business,
