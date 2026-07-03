@@ -54,7 +54,8 @@ const staffSchema = new mongoose.Schema(
     /** Tarih bazlı izin / müsait değil günleri */
     leaveDays: [
       {
-        date: { type: Date, required: true },
+        startDate: { type: Date, required: true },
+        endDate: { type: Date, required: true },
         reason: { type: String, trim: true, default: '', maxlength: 120 },
       },
     ],

@@ -79,10 +79,14 @@ const RESERVATION_STATUS = {
 // Default slot interval in minutes
 const SLOT_INTERVAL_MINUTES = 15;
 
+/** Müşteri iptali: randevu başlangıcından en az bu kadar saat önce */
+const CUSTOMER_CANCEL_HOURS_BEFORE = Number(process.env.CUSTOMER_CANCEL_HOURS_BEFORE || 12);
+
 module.exports = {
   ROLES,
   BUSINESS_TYPES,
   SUBSCRIPTION_STATUS,
   RESERVATION_STATUS,
   SLOT_INTERVAL_MINUTES,
+  CUSTOMER_CANCEL_HOURS_BEFORE,
 };

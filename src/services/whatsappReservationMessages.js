@@ -169,7 +169,7 @@ function buildBusinessBookingMessage({
   const lines = [
     `${waBold('Yeni randevunuz var')} 🔔`,
     '',
-    'Yeni bir randevu alındı. Lütfen inceleyip onaylayın.',
+    'Yeni bir randevu alındı.',
     '',
     waLine('Tarih', formatDateTr(dateKey)),
     waLine('Saat', time),

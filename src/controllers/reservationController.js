@@ -11,9 +11,12 @@ const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('..
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
-const { sendReservationApprovedWhatsApp } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
 const { getSlotCapacity } = require('../utils/bookingCapacity');
+const {
+  canCustomerCancelReservation,
+  CUSTOMER_CANCEL_HOURS_BEFORE,
+} = require('../utils/reservationCancelPolicy');
 const {
   isBusinessClosedOnDate,
   getBusinessClosedReason,
@@ -21,6 +24,7 @@ const {
   getStaffLeaveReason,
   exceptionDayKey,
   eachCalendarDayKeys,
+  expandExceptionToDayKeys,
 } = require('../utils/availabilityExceptions');
 
 /**
@@ -170,7 +174,7 @@ exports.createReservation = asyncHandler(async (req, res) => {
     time,
     durationMinutes,
     endTime,
-    status: RESERVATION_STATUS.PENDING,
+    status: RESERVATION_STATUS.APPROVED,
     notes: notes || undefined,
   });
 
@@ -317,12 +321,14 @@ exports.getBlockedDates = asyncHandler(async (req, res) => {
   }
 
   const dayKeys = eachCalendarDayKeys(fromStored, toStored);
-  const businessClosed = (business.closedDays || [])
-    .map((entry) => exceptionDayKey(entry.date))
-    .filter(Boolean);
-  const businessClosedSet = new Set(businessClosed);
+  const businessClosedSet = new Set();
+  for (const entry of business.closedDays || []) {
+    for (const key of expandExceptionToDayKeys(entry)) {
+      businessClosedSet.add(key);
+    }
+  }
 
-  let staffLeave = [];
+  let staffLeaveSet = new Set();
   if (staffId) {
     const staff = await Staff.findOne({ _id: staffId, businessId, isActive: true })
       .select('leaveDays serviceIds')
@@ -331,20 +337,22 @@ exports.getBlockedDates = asyncHandler(async (req, res) => {
     if (!isStaffEligibleForService(staff, service)) {
       return error(res, 400, 'This staff member does not offer this service.');
     }
-    staffLeave = (staff.leaveDays || []).map((entry) => exceptionDayKey(entry.date)).filter(Boolean);
-  } else {
-    const eligibleStaff = await getEligibleStaffForService(businessId, service);
-    const leaveUnion = new Set();
-    for (const member of eligibleStaff) {
-      for (const entry of member.leaveDays || []) {
-        const key = exceptionDayKey(entry.date);
-        if (key) leaveUnion.add(key);
+    for (const entry of staff.leaveDays || []) {
+      for (const key of expandExceptionToDayKeys(entry)) {
+        staffLeaveSet.add(key);
       }
     }
-    staffLeave = [...leaveUnion];
+  } else {
+    const eligibleStaff = await getEligibleStaffForService(businessId, service);
+    for (const member of eligibleStaff) {
+      for (const entry of member.leaveDays || []) {
+        for (const key of expandExceptionToDayKeys(entry)) {
+          staffLeaveSet.add(key);
+        }
+      }
+    }
   }
 
-  const staffLeaveSet = new Set(staffLeave);
   const unavailable = [];
 
   for (const key of dayKeys) {
@@ -367,8 +375,8 @@ exports.getBlockedDates = asyncHandler(async (req, res) => {
     200,
     {
       unavailable,
-      businessClosed: businessClosed.filter((k) => dayKeys.includes(k)),
-      staffLeave: staffLeave.filter((k) => dayKeys.includes(k)),
+      businessClosed: [...businessClosedSet].filter((k) => dayKeys.includes(k)),
+      staffLeave: [...staffLeaveSet].filter((k) => dayKeys.includes(k)),
       from: exceptionDayKey(fromStored),
       to: exceptionDayKey(toStored),
     },
@@ -479,8 +487,8 @@ exports.getReservationsByCustomer = asyncHandler(async (req, res) => {
 });
 
 /**
- * PATCH /reservations/:id/status - Approve or cancel (business owner)
- * Body: status (approved | canceled)
+ * PATCH /reservations/:id/status - Cancel reservation (business owner)
+ * Body: status (canceled)
  */
 exports.updateReservationStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -495,21 +503,17 @@ exports.updateReservationStatus = asyncHandler(async (req, res) => {
     return error(res, 403, 'You do not own this business.');
   }
 
-  if (status === RESERVATION_STATUS.APPROVED) {
-    if (reservation.status !== RESERVATION_STATUS.PENDING) {
-      return error(res, 400, 'Only pending reservations can be approved.');
-    }
-    reservation.status = RESERVATION_STATUS.APPROVED;
-  } else if (status === RESERVATION_STATUS.CANCELED) {
-    if (![RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED].includes(reservation.status)) {
-      return error(res, 400, 'Reservation cannot be canceled.');
-    }
-    reservation.status = RESERVATION_STATUS.CANCELED;
-    reservation.canceledAt = new Date();
-    reservation.canceledBy = req.user._id;
-  } else {
-    return error(res, 400, 'Invalid status. Use approved or canceled.');
+  if (status !== RESERVATION_STATUS.CANCELED) {
+    return error(res, 400, 'Yalnızca iptal işlemi desteklenir.');
   }
+
+  if (![RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED].includes(reservation.status)) {
+    return error(res, 400, 'Reservation cannot be canceled.');
+  }
+
+  reservation.status = RESERVATION_STATUS.CANCELED;
+  reservation.canceledAt = new Date();
+  reservation.canceledBy = req.user._id;
 
   await reservation.save();
   await reservation.populate([
@@ -517,10 +521,6 @@ exports.updateReservationStatus = asyncHandler(async (req, res) => {
     { path: 'customerId', select: 'firstName lastName email' },
   ]);
 
-  // Müşteriye WhatsApp: sadece onaylandıktan sonra (PRO işletmeler).
-  if (status === RESERVATION_STATUS.APPROVED) {
-    void sendReservationApprovedWhatsApp(reservation._id).catch(() => {});
-  }
   return success(res, 200, reservation, 'Reservation updated.');
 });
 
@@ -541,6 +541,16 @@ exports.cancelReservation = asyncHandler(async (req, res) => {
 
   if (![RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED].includes(reservation.status)) {
     return error(res, 400, 'Reservation cannot be canceled.');
+  }
+
+  if (isOwner && !isBusinessOwner && req.user.role !== ROLES.SUPER_ADMIN) {
+    if (!canCustomerCancelReservation(reservation)) {
+      return error(
+        res,
+        403,
+        `Randevu başlangıcına ${CUSTOMER_CANCEL_HOURS_BEFORE} saatten az kaldığı için iptal edilemez.`
+      );
+    }
   }
 
   reservation.status = RESERVATION_STATUS.CANCELED;

@@ -18,7 +18,7 @@ exports.createReservationRules = () => [
 
 exports.updateStatusRules = () => [
   param('id').isMongoId().withMessage('Invalid reservation ID'),
-  body('status').isIn([RESERVATION_STATUS.APPROVED, RESERVATION_STATUS.CANCELED]).withMessage('Status must be approved or canceled'),
+  body('status').isIn([RESERVATION_STATUS.CANCELED]).withMessage('Status must be canceled'),
 ];
 
 exports.availableSlotsQueryRules = () => [

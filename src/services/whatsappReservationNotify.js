@@ -132,12 +132,38 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     businessResult: results.business,
   });
 
-  // Müşteri — artık randevu oluşturulunca mesaj gönderme.
-  // İstenilen akış: müşteri mesajı sadece işletme onayladıktan sonra gitsin.
-  results.customer = { ok: true, skipped: true, reason: 'send_on_approval_only' };
-  waLog('⏭️', 'Müşteri anlık bildirimi kapalı — onay sonrası gönderilecek', {
+  // Müşteri — randevu oluşturulunca (yalnızca PRO işletmeler)
+  if (r.reminders?.customerWhatsAppBookingSentAt) {
+    results.customer = { ok: true, skipped: true, reason: 'already_sent' };
+  } else if (!isPro) {
+    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
+  } else if (!customerPhone) {
+    results.customer = { ok: false, skipped: true, reason: 'no_customer_phone' };
+  } else {
+    const msg = buildCustomerApprovedMessage({
+      businessName: business?.name || 'İşletme',
+      dateKey,
+      time: r.time,
+      serviceName: service?.name || 'Hizmet',
+    });
+    const res = await sendWhatsApp({
+      toPhone: customerPhone,
+      body: msg,
+      tag: `reservation:${r._id}:customer:booking`,
+    });
+    results.customer = res;
+    if (res.ok) {
+      await Reservation.updateOne(
+        { _id: r._id },
+        { $set: { 'reminders.customerWhatsAppBookingSentAt': new Date() } }
+      );
+    }
+  }
+
+  waLog(results.customer?.ok ? '✅' : results.customer?.skipped ? '⏭️' : '❌', 'Müşteri anlık bildirimi özeti', {
     reservationId: String(r._id),
     isPro,
+    customerResult: results.customer,
   });
 
   waLog('🏁', 'ANLIK randevu bildirimi tamamlandı', {

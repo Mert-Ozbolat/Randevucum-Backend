@@ -28,7 +28,8 @@ const breakTimeSchema = new mongoose.Schema(
 
 const exceptionDaySchema = new mongoose.Schema(
   {
-    date: { type: Date, required: true }, // calendar day at 12:00 UTC
+    startDate: { type: Date, required: true }, // calendar day at 12:00 UTC (inclusive)
+    endDate: { type: Date, required: true }, // calendar day at 12:00 UTC (inclusive)
     reason: { type: String, trim: true, default: '', maxlength: 120 },
   },
   { _id: false }

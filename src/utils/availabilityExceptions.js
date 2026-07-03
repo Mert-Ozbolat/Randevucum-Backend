@@ -1,6 +1,7 @@
 const { reservationDayToStoredDate } = require('./calendarDate');
 
-const MAX_EXCEPTION_DAYS = 366;
+const MAX_EXCEPTION_RANGES = 100;
+const MAX_RANGE_SPAN_DAYS = 366;
 
 /**
  * @param {Date | string | null | undefined} storedOrInput
@@ -19,15 +20,35 @@ function exceptionDayKey(storedOrInput) {
   return `${y}-${m}-${day}`;
 }
 
-function exceptionDaysMatch(a, b) {
-  const keyA = exceptionDayKey(a);
-  const keyB = exceptionDayKey(b);
-  return Boolean(keyA && keyB && keyA === keyB);
+function getExceptionRangeBounds(entry) {
+  if (!entry) return null;
+  if (entry.startDate && entry.endDate) {
+    return { start: entry.startDate, end: entry.endDate };
+  }
+  if (entry.date) {
+    return { start: entry.date, end: entry.date };
+  }
+  if (entry.startDate) {
+    return { start: entry.startDate, end: entry.startDate };
+  }
+  return null;
+}
+
+function isDateInException(entry, date) {
+  const bounds = getExceptionRangeBounds(entry);
+  if (!bounds) return false;
+  const stored = date instanceof Date ? date : reservationDayToStoredDate(date);
+  if (!stored) return false;
+  const key = exceptionDayKey(stored);
+  const startKey = exceptionDayKey(bounds.start);
+  const endKey = exceptionDayKey(bounds.end);
+  if (!key || !startKey || !endKey) return false;
+  return key >= startKey && key <= endKey;
 }
 
 /**
- * @param {Array<string|{date:string,reason?:string}>|null|undefined} input
- * @returns {Array<{date:Date,reason:string}>|null}
+ * @param {Array<string|{date?:string,startDate?:string,endDate?:string,reason?:string}>|null|undefined} input
+ * @returns {Array<{startDate:Date,endDate:Date,reason:string}>|null}
  */
 function normalizeExceptionDays(input) {
   if (input === undefined) return null;
@@ -37,45 +58,83 @@ function normalizeExceptionDays(input) {
   const seen = new Set();
 
   for (const item of input) {
-    const rawDate = typeof item === 'string' ? item : item?.date;
-    const stored = reservationDayToStoredDate(rawDate);
-    if (!stored) continue;
-    const key = exceptionDayKey(stored);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
+    let startRaw;
+    let endRaw;
+    if (typeof item === 'string') {
+      startRaw = item;
+      endRaw = item;
+    } else if (item?.startDate || item?.endDate) {
+      startRaw = item.startDate;
+      endRaw = item.endDate || item.startDate;
+    } else if (item?.date) {
+      startRaw = item.date;
+      endRaw = item.date;
+    } else {
+      continue;
+    }
+
+    let startStored = reservationDayToStoredDate(startRaw);
+    let endStored = reservationDayToStoredDate(endRaw);
+    if (!startStored || !endStored) continue;
+
+    if (endStored.getTime() < startStored.getTime()) {
+      const tmp = startStored;
+      startStored = endStored;
+      endStored = tmp;
+    }
+
+    const spanKeys = eachCalendarDayKeys(startStored, endStored);
+    if (spanKeys.length > MAX_RANGE_SPAN_DAYS) continue;
+
+    const rangeKey = `${exceptionDayKey(startStored)}_${exceptionDayKey(endStored)}`;
+    if (seen.has(rangeKey)) continue;
+    seen.add(rangeKey);
+
     const reason =
       typeof item === 'object' && item?.reason ? String(item.reason).trim().slice(0, 120) : '';
-    out.push({ date: stored, reason });
-    if (out.length >= MAX_EXCEPTION_DAYS) break;
+    out.push({ startDate: startStored, endDate: endStored, reason });
+    if (out.length >= MAX_EXCEPTION_RANGES) break;
   }
 
-  out.sort((a, b) => a.date.getTime() - b.date.getTime());
+  out.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
   return out;
 }
 
+function expandExceptionToDayKeys(entry) {
+  const bounds = getExceptionRangeBounds(entry);
+  if (!bounds) return [];
+  const start =
+    bounds.start instanceof Date ? bounds.start : reservationDayToStoredDate(bounds.start);
+  const end = bounds.end instanceof Date ? bounds.end : reservationDayToStoredDate(bounds.end);
+  if (!start || !end) return [];
+  let from = start;
+  let to = end;
+  if (to.getTime() < from.getTime()) {
+    from = end;
+    to = start;
+  }
+  return eachCalendarDayKeys(from, to);
+}
+
 function isBusinessClosedOnDate(business, date) {
-  const stored = date instanceof Date ? date : reservationDayToStoredDate(date);
-  if (!stored || !business?.closedDays?.length) return false;
-  return business.closedDays.some((entry) => exceptionDaysMatch(entry.date, stored));
+  if (!business?.closedDays?.length) return false;
+  return business.closedDays.some((entry) => isDateInException(entry, date));
 }
 
 function getBusinessClosedReason(business, date) {
-  const stored = date instanceof Date ? date : reservationDayToStoredDate(date);
-  if (!stored || !business?.closedDays?.length) return null;
-  const hit = business.closedDays.find((entry) => exceptionDaysMatch(entry.date, stored));
+  if (!business?.closedDays?.length) return null;
+  const hit = business.closedDays.find((entry) => isDateInException(entry, date));
   return hit?.reason || 'İşletme kapalı';
 }
 
 function isStaffOnLeave(staff, date) {
-  const stored = date instanceof Date ? date : reservationDayToStoredDate(date);
-  if (!stored || !staff?.leaveDays?.length) return false;
-  return staff.leaveDays.some((entry) => exceptionDaysMatch(entry.date, stored));
+  if (!staff?.leaveDays?.length) return false;
+  return staff.leaveDays.some((entry) => isDateInException(entry, date));
 }
 
 function getStaffLeaveReason(staff, date) {
-  const stored = date instanceof Date ? date : reservationDayToStoredDate(date);
-  if (!stored || !staff?.leaveDays?.length) return null;
-  const hit = staff.leaveDays.find((entry) => exceptionDaysMatch(entry.date, stored));
+  if (!staff?.leaveDays?.length) return null;
+  const hit = staff.leaveDays.find((entry) => isDateInException(entry, date));
   return hit?.reason || 'İzin günü';
 }
 
@@ -99,10 +158,13 @@ function eachCalendarDayKeys(fromStored, toStored) {
 }
 
 module.exports = {
-  MAX_EXCEPTION_DAYS,
+  MAX_EXCEPTION_RANGES,
+  MAX_RANGE_SPAN_DAYS,
   exceptionDayKey,
-  exceptionDaysMatch,
+  getExceptionRangeBounds,
+  isDateInException,
   normalizeExceptionDays,
+  expandExceptionToDayKeys,
   isBusinessClosedOnDate,
   getBusinessClosedReason,
   isStaffOnLeave,

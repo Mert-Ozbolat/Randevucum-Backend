@@ -42,7 +42,7 @@ const reservationSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: Object.values(RESERVATION_STATUS),
-      default: RESERVATION_STATUS.PENDING,
+      default: RESERVATION_STATUS.APPROVED,
     },
     notes: {
       type: String,
