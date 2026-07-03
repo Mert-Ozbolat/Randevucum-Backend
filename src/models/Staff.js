@@ -68,6 +68,18 @@ const staffSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    /** null = işletme ayarını kullan; false = tek müşteri; true = eşzamanlı */
+    allowConcurrentBookings: {
+      type: Boolean,
+      default: null,
+    },
+    /** allowConcurrentBookings true iken personel başına eşzamanlı üst sınır (null = işletme limiti) */
+    concurrentBookingLimit: {
+      type: Number,
+      default: null,
+      min: 2,
+      max: 50,
+    },
   },
   {
     timestamps: true,

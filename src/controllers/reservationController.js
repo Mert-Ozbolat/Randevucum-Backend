@@ -6,7 +6,7 @@ const User = require('../models/User');
 const { normalizePhoneForDatabase } = require('../utils/phone');
 const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
-const { getAvailableSlots, timeToMinutes, minutesToTime } = require('../utils/slotCalculator');
+const { getAvailableSlots, normalizeTimeStr, findOverlappingReservations, getStaffConcurrentLimit, timeToMinutes, minutesToTime } = require('../utils/slotCalculator');
 const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('../utils/calendarDate');
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
@@ -111,7 +111,8 @@ exports.createReservation = asyncHandler(async (req, res) => {
   if (!service) return error(res, 404, 'Service not found.');
 
   const durationMinutes = service.durationMinutes;
-  const endTime = calculateEndTime(time, durationMinutes);
+  const normalizedTime = normalizeTimeStr(time);
+  const endTime = calculateEndTime(normalizedTime, durationMinutes);
 
   const reservationDate = reservationDayToStoredDate(date);
   if (!reservationDate) return error(res, 400, 'Invalid date.');
@@ -127,15 +128,13 @@ exports.createReservation = asyncHandler(async (req, res) => {
   const capacity = getSlotCapacity(business, eligibleStaffCount);
 
   const nextDay = nextReservationDayStoredDate(reservationDate);
-  const overlapQuery = {
+  const dayReservations = await Reservation.find({
     businessId,
     date: { $gte: reservationDate, $lt: nextDay },
     status: { $in: [RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED] },
-    time: { $lt: endTime },
-    endTime: { $gt: time },
-  };
+  }).lean();
 
-  const overlapping = await Reservation.find(overlapQuery).lean();
+  const overlapping = findOverlappingReservations(dayReservations, normalizedTime, durationMinutes);
   if (overlapping.length >= capacity) {
     return error(res, 409, 'Bu saat dilimi dolu.');
   }
@@ -158,11 +157,12 @@ exports.createReservation = asyncHandler(async (req, res) => {
         getStaffLeaveReason(staffMember, reservationDate) || 'Seçilen personel bu tarihte izinli.'
       );
     }
-    const taken = overlapping.some(
+    const staffCap = getStaffConcurrentLimit(business, staffMember);
+    const staffOverlapping = overlapping.filter(
       (r) => r.staffId && r.staffId.toString() === resolvedStaffId.toString()
     );
-    if (taken) {
-      return error(res, 409, 'This staff member is already booked at this time.');
+    if (staffOverlapping.length >= staffCap) {
+      return error(res, 409, 'Seçilen personel bu saat diliminde dolu.');
     }
   }
 
@@ -181,7 +181,7 @@ exports.createReservation = asyncHandler(async (req, res) => {
     staffId: resolvedStaffId,
     customerId,
     date: reservationDate,
-    time,
+    time: normalizedTime,
     durationMinutes,
     endTime,
     status: RESERVATION_STATUS.APPROVED,
@@ -284,6 +284,7 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
     );
   }
   const capacity = getSlotCapacity(business, eligibleStaffCount);
+  const staffConcurrentLimit = staff ? getStaffConcurrentLimit(business, staff) : null;
 
   const slots = getAvailableSlots(
     business,
@@ -291,7 +292,7 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
     reservationDate,
     existingReservations,
     staff,
-    { capacity, selectedStaffId: staffId || null }
+    { capacity, selectedStaffId: staffId || null, staffConcurrentLimit }
   );
 
   return success(res, 200, { slots, date: reservationDate, service: { name: service.name, durationMinutes: service.durationMinutes } }, 'OK');

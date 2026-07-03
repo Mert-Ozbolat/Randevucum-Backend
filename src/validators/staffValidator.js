@@ -12,6 +12,8 @@ exports.createStaffRules = () => [
   body('workingHours').optional().isArray(),
   body('leaveDays').optional().isArray(),
   body('canViewOwnReservations').optional().isBoolean(),
+  body('allowConcurrentBookings').optional(),
+  body('concurrentBookingLimit').optional(),
   body('linkUserEmail').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
 ];
 
@@ -26,6 +28,8 @@ exports.updateStaffRules = () => [
   body('isActive').optional().isBoolean(),
   body('leaveDays').optional().isArray(),
   body('canViewOwnReservations').optional().isBoolean(),
+  body('allowConcurrentBookings').optional(),
+  body('concurrentBookingLimit').optional(),
   body('linkUserEmail').optional().trim(),
 ];
 

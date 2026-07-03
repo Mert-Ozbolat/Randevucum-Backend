@@ -84,6 +84,8 @@ exports.updateStaff = asyncHandler(async (req, res) => {
     'workingHours',
     'leaveDays',
     'isActive',
+    'allowConcurrentBookings',
+    'concurrentBookingLimit',
   ];
   allowed.forEach((key) => {
     if (req.body[key] === undefined) return;
@@ -96,6 +98,19 @@ exports.updateStaff = asyncHandler(async (req, res) => {
 
   if (req.body.canViewOwnReservations !== undefined) {
     staff.canViewOwnReservations = Boolean(req.body.canViewOwnReservations);
+  }
+  if (req.body.allowConcurrentBookings === null || req.body.allowConcurrentBookings === 'inherit') {
+    staff.allowConcurrentBookings = null;
+  } else if (req.body.allowConcurrentBookings !== undefined) {
+    staff.allowConcurrentBookings = Boolean(req.body.allowConcurrentBookings);
+  }
+  if (req.body.concurrentBookingLimit === null || req.body.concurrentBookingLimit === '') {
+    staff.concurrentBookingLimit = null;
+  } else if (req.body.concurrentBookingLimit !== undefined) {
+    const n = parseInt(req.body.concurrentBookingLimit, 10);
+    staff.concurrentBookingLimit = Number.isFinite(n)
+      ? Math.min(50, Math.max(2, n))
+      : null;
   }
   if (req.body.leaveDays !== undefined) {
     staff.leaveDays = normalizeExceptionDays(req.body.leaveDays) || [];

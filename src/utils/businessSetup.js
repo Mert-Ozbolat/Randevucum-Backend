@@ -7,9 +7,8 @@ const DESCRIPTION_MIN_LEN = 8;
 
 function hasProfileLocationDone(b) {
   const city = b.address?.city?.trim();
-  const district = b.address?.district?.trim();
   const street = b.address?.street?.trim() ?? '';
-  if (city || district || street.length >= 5) return true;
+  if (city || street.length >= 5) return true;
   const lat = b.location?.lat;
   const lng = b.location?.lng;
   return (
