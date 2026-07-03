@@ -227,9 +227,6 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     metadata: { businessId, userId: req.user._id.toString() },
     subscription_data: {
       metadata: { businessId, userId: req.user._id.toString() },
-      payment_settings: {
-        save_default_payment_method: 'on_subscription',
-      },
     },
     allow_promotion_codes: true,
   };
