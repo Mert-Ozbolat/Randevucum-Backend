@@ -112,6 +112,12 @@ const businessSchema = new mongoose.Schema(
       default: '',
       maxlength: 200,
     },
+    /** Keşfet videosu izlenme sayısı */
+    promoVideoViews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     /**
      * Ana sayfa slider reklamı (ücretli süre: paidUntil).
      * Sadece paidUntil > şimdi ve imageUrl dolu ise herkese açık slider’da gösterilir.

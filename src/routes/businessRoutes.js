@@ -16,6 +16,13 @@ router.get('/home-slider-ads', businessController.getHomeSliderAds);
 
 router.get('/discover', businessController.listDiscoverVideos);
 
+router.post(
+  '/:id/discover-view',
+  getBusinessRules(),
+  validate,
+  businessController.recordDiscoverView
+);
+
 router.get(
   '/setup-status',
   protect,

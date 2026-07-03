@@ -255,13 +255,34 @@ exports.listDiscoverVideos = asyncHandler(async (_req, res) => {
     promoVideoUrl: { $exists: true, $nin: ['', null] },
   })
     .select(
-      'name businessType description imageUrl address averageRating reviewCount promoVideoUrl promoVideoCaption createdAt updatedAt'
+      'name businessType description imageUrl address averageRating reviewCount promoVideoUrl promoVideoCaption promoVideoViews createdAt updatedAt'
     )
     .sort({ updatedAt: -1 })
     .lean();
 
   const data = businesses.filter((b) => String(b.promoVideoUrl || '').trim());
   return success(res, 200, data, 'OK');
+});
+
+/**
+ * POST /business/:id/discover-view — Keşfet videosu izlenme sayacı (+1)
+ */
+exports.recordDiscoverView = asyncHandler(async (req, res) => {
+  const business = await Business.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      isActive: true,
+      promoVideoUrl: { $exists: true, $nin: ['', null] },
+    },
+    { $inc: { promoVideoViews: 1 } },
+    { new: true }
+  ).select('promoVideoViews');
+
+  if (!business) {
+    return error(res, 404, 'Video bulunamadı.');
+  }
+
+  return success(res, 200, { views: business.promoVideoViews ?? 0 }, 'OK');
 });
 
 /**
