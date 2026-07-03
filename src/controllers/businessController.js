@@ -12,7 +12,7 @@ const {
 const { loadSetupContext, syncBusinessPublicActivation } = require('../utils/businessSetup');
 const { normalizePhoneForDatabase } = require('../utils/phone');
 const { normalizeExceptionDays } = require('../utils/availabilityExceptions');
-const { publicBusinessFilter } = require('../utils/subscriptionBilling');
+const { publicBusinessFilter, getBusinessBilling } = require('../utils/subscriptionBilling');
 
 /**
  * POST /business - Create business (BusinessOwner only)
@@ -99,6 +99,23 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
       return error(res, 400, 'Geçerli bir işletme telefon numarası girin.');
     }
     business.phone = normalized || '';
+  }
+
+  // Keşfet videosu yalnızca Pro pakete özeldir.
+  if (req.body.promoVideoUrl !== undefined) {
+    const nextUrl = String(req.body.promoVideoUrl || '').trim();
+    const currentUrl = String(business.promoVideoUrl || '').trim();
+    const isAddingVideo = nextUrl && nextUrl !== currentUrl;
+    if (isAddingVideo && req.user.role !== ROLES.SUPER_ADMIN) {
+      const billing = await getBusinessBilling(business._id);
+      if (!billing.hasProAccess) {
+        return error(
+          res,
+          403,
+          'Keşfet videosu yalnızca Pro pakete özeldir. Pro pakete geçerek Keşfet’e video paylaşabilirsiniz.'
+        );
+      }
+    }
   }
 
   allowed.forEach((key) => {
