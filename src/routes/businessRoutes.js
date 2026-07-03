@@ -14,6 +14,8 @@ const router = express.Router();
 
 router.get('/home-slider-ads', businessController.getHomeSliderAds);
 
+router.get('/discover', businessController.listDiscoverVideos);
+
 router.get(
   '/setup-status',
   protect,

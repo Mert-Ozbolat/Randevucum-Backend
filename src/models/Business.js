@@ -99,6 +99,19 @@ const businessSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    /** Keşfet reels — kısa tanıtım videosu (ImageKit URL) */
+    promoVideoUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    /** Keşfet videosunda görünen kısa açıklama */
+    promoVideoCaption: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: 200,
+    },
     /**
      * Ana sayfa slider reklamı (ücretli süre: paidUntil).
      * Sadece paidUntil > şimdi ve imageUrl dolu ise herkese açık slider’da gösterilir.

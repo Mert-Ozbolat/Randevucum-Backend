@@ -82,6 +82,8 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     'email',
     'description',
     'imageUrl',
+    'promoVideoUrl',
+    'promoVideoCaption',
     'workingHours',
     'breakTimes',
     'closedDays',
@@ -242,6 +244,24 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
   return success(res, 200, businesses, 'OK');
+});
+
+/**
+ * GET /business/discover — Keşfet reels (promo videosu olan aktif işletmeler)
+ */
+exports.listDiscoverVideos = asyncHandler(async (_req, res) => {
+  const businesses = await Business.find({
+    isActive: true,
+    promoVideoUrl: { $exists: true, $nin: ['', null] },
+  })
+    .select(
+      'name businessType description imageUrl address averageRating reviewCount promoVideoUrl promoVideoCaption createdAt updatedAt'
+    )
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  const data = businesses.filter((b) => String(b.promoVideoUrl || '').trim());
+  return success(res, 200, data, 'OK');
 });
 
 /**
