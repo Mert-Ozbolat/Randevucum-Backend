@@ -6,7 +6,41 @@ const { resolveProPriceIds } = require('../config/stripe');
 const GRACE_DAYS = Math.max(1, parseInt(process.env.SUBSCRIPTION_GRACE_DAYS || '7', 10) || 7);
 
 const BILLING_NOTICE_PAYMENT_FAILED =
-  'Ödemeniz alınamadı. PRO erişiminizin kesilmemesi için ödeme yönteminizi güncelleyin.';
+  'Ödemeniz alınamadı. İşletmeniz offline moda alındı; Keşfet ve randevu kapalı. Ödeme yönteminizi güncelleyin.';
+
+const BILLING_NOTICE_SUSPENDED =
+  'Aboneliğiniz askıda. Müşteriler sizi göremez ve randevu alamaz. Aboneliği yenileyin.';
+
+function formatDateTr(date) {
+  return new Date(date).toLocaleDateString('tr-TR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/** Herkese açık listelerde görünür işletme filtresi */
+function publicBusinessFilter(extra = {}) {
+  return {
+    ...extra,
+    isActive: true,
+    billingSuspended: { $ne: true },
+  };
+}
+
+function buildRenewalNotice(sub, daysLeft) {
+  const endLabel = formatDateTr(sub.endDate);
+  const hasStripe = Boolean(sub.stripeSubscriptionId);
+  const autoRenews = hasStripe && !sub.cancelAtPeriodEnd && !sub.isTrial;
+
+  if (autoRenews) {
+    return `Aboneliğiniz ${endLabel} tarihinde kayıtlı kartınızdan otomatik yenilenecek. Ek işlem gerekmez.`;
+  }
+  if (daysLeft <= 1) {
+    return `Aboneliğiniz yarın (${endLabel}) sona eriyor. Kesintisiz hizmet için aboneliğinizi yenileyin.`;
+  }
+  return `Aboneliğiniz ${endLabel} tarihinde sona eriyor (${daysLeft} gün kaldı). Lütfen aboneliğinizi yenileyin.`;
+}
 
 function isProPlanKey(planKey) {
   return String(planKey || '').toLowerCase() === 'pro';
@@ -138,6 +172,7 @@ async function getBusinessBilling(businessId) {
 }
 
 async function suspendBusinessBilling(businessId, { notice } = {}) {
+  const msg = notice || BILLING_NOTICE_SUSPENDED;
   await Business.findByIdAndUpdate(businessId, {
     $set: { billingSuspended: true, isActive: false },
   });
@@ -146,7 +181,7 @@ async function suspendBusinessBilling(businessId, { notice } = {}) {
     {
       $set: {
         status: SUBSCRIPTION_STATUS.EXPIRED,
-        ...(notice ? { billingNotice: notice } : {}),
+        billingNotice: msg,
       },
     }
   );
@@ -186,11 +221,47 @@ async function startPaymentGracePeriod(businessId, subscriptionId) {
 }
 
 /**
+ * Abonelik bitişine yaklaşan işletmelere uyarı mesajı yazar.
+ */
+async function applyRenewalWarnings({ now = new Date() } = {}) {
+  let updated = 0;
+  const warnDays = [7, 3, 1];
+
+  for (const daysLeft of warnDays) {
+    const dayStart = new Date(now);
+    dayStart.setDate(dayStart.getDate() + daysLeft);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const subs = await Subscription.find({
+      status: SUBSCRIPTION_STATUS.ACTIVE,
+      endDate: { $gte: dayStart, $lt: dayEnd },
+      paymentFailedAt: null,
+    }).lean();
+
+    for (const sub of subs) {
+      const business = await Business.findById(sub.businessId).select('billingSuspended').lean();
+      if (business?.billingSuspended) continue;
+
+      const notice = buildRenewalNotice(sub, daysLeft);
+      await Subscription.findByIdAndUpdate(sub._id, { $set: { billingNotice: notice } });
+      updated += 1;
+    }
+  }
+
+  return updated;
+}
+
+/**
  * Süresi dolan grace / trial kayıtlarını işler.
  */
 async function runSubscriptionBillingMaintenance({ now = new Date() } = {}) {
   let graceSuspended = 0;
   let trialsExpired = 0;
+  let renewalWarnings = 0;
+
+  renewalWarnings = await applyRenewalWarnings({ now });
 
   const graceExpired = await Subscription.find({
     status: SUBSCRIPTION_STATUS.ACTIVE,
@@ -237,12 +308,16 @@ async function runSubscriptionBillingMaintenance({ now = new Date() } = {}) {
     paidExpired += 1;
   }
 
-  return { ok: true, graceSuspended, trialsExpired, paidExpired };
+  return { ok: true, graceSuspended, trialsExpired, paidExpired, renewalWarnings };
 }
 
 module.exports = {
   GRACE_DAYS,
   BILLING_NOTICE_PAYMENT_FAILED,
+  BILLING_NOTICE_SUSPENDED,
+  formatDateTr,
+  publicBusinessFilter,
+  buildRenewalNotice,
   isProPlanKey,
   resolvePlanKeyFromSub,
   isInGracePeriod,
@@ -252,5 +327,6 @@ module.exports = {
   suspendBusinessBilling,
   clearBillingFailure,
   startPaymentGracePeriod,
+  applyRenewalWarnings,
   runSubscriptionBillingMaintenance,
 };

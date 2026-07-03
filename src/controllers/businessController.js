@@ -12,6 +12,7 @@ const {
 const { loadSetupContext, syncBusinessPublicActivation } = require('../utils/businessSetup');
 const { normalizePhoneForDatabase } = require('../utils/phone');
 const { normalizeExceptionDays } = require('../utils/availabilityExceptions');
+const { publicBusinessFilter } = require('../utils/subscriptionBilling');
 
 /**
  * POST /business - Create business (BusinessOwner only)
@@ -154,6 +155,9 @@ exports.getBusiness = asyncHandler(async (req, res) => {
   if (!business.isActive && !isOwner) {
     return error(res, 404, 'İşletme henüz yayında değil.');
   }
+  if (!isOwner && business.billingSuspended) {
+    return error(res, 404, 'İşletme şu anda yayında değil.');
+  }
   return success(res, 200, business, 'OK');
 });
 
@@ -209,7 +213,7 @@ exports.getSetupStatus = asyncHandler(async (req, res) => {
  * GET /business - List businesses (filter by type, for customers or admin)
  */
 exports.listBusinesses = asyncHandler(async (req, res) => {
-  const { businessType, ownerId, isActive, area, profession } = req.query;
+  const { businessType, ownerId, isActive, area, profession, sort: sortKey, limit: limitRaw } = req.query;
   const filter = {};
   if (businessType) filter.businessType = businessType;
 
@@ -235,14 +239,30 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
   } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   } else {
-    // Public catalog: all active businesses (including when a business owner browses /business)
-    filter.isActive = true;
+    // Public catalog: aktif ve askıda olmayan işletmeler
+    Object.assign(filter, publicBusinessFilter());
   }
 
-  const businesses = await Business.find(filter)
-    .populate('ownerId', 'firstName lastName email')
-    .sort({ createdAt: -1 })
-    .lean();
+  const sortByRating = sortKey === 'rating';
+  if (sortByRating) {
+    filter.averageRating = { $ne: null, $gte: 1 };
+    filter.reviewCount = { $gt: 0 };
+  }
+
+  let query = Business.find(filter).populate('ownerId', 'firstName lastName email');
+
+  if (sortByRating) {
+    query = query.sort({ averageRating: -1, reviewCount: -1, createdAt: -1 });
+  } else {
+    query = query.sort({ createdAt: -1 });
+  }
+
+  const rawLimit = parseInt(limitRaw, 10);
+  if (Number.isFinite(rawLimit) && rawLimit > 0) {
+    query = query.limit(Math.min(50, rawLimit));
+  }
+
+  const businesses = await query.lean();
   return success(res, 200, businesses, 'OK');
 });
 
@@ -253,10 +273,11 @@ exports.listDiscoverVideos = asyncHandler(async (req, res) => {
   const rawLimit = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, rawLimit)) : null;
 
-  let query = Business.find({
-    isActive: true,
-    promoVideoUrl: { $exists: true, $nin: ['', null] },
-  })
+  let query = Business.find(
+    publicBusinessFilter({
+      promoVideoUrl: { $exists: true, $nin: ['', null] },
+    })
+  )
     .select(
       'name businessType description imageUrl address averageRating reviewCount promoVideoUrl promoVideoCaption promoVideoViews createdAt updatedAt'
     )
@@ -277,8 +298,9 @@ exports.recordDiscoverView = asyncHandler(async (req, res) => {
   const business = await Business.findOneAndUpdate(
     {
       _id: req.params.id,
-      isActive: true,
-      promoVideoUrl: { $exists: true, $nin: ['', null] },
+      ...publicBusinessFilter({
+        promoVideoUrl: { $exists: true, $nin: ['', null] },
+      }),
     },
     { $inc: { promoVideoViews: 1 } },
     { new: true }
@@ -421,7 +443,7 @@ exports.listBusinessesByAreaProfession = asyncHandler(async (req, res) => {
   } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   } else {
-    filter.isActive = true;
+    Object.assign(filter, publicBusinessFilter());
   }
 
   const businesses = await Business.find(filter)

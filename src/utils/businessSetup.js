@@ -1,6 +1,7 @@
 const Business = require('../models/Business');
 const Service = require('../models/Service');
 const Staff = require('../models/Staff');
+const { getBusinessBilling } = require('./subscriptionBilling');
 
 const DESCRIPTION_MIN_LEN = 8;
 
@@ -65,7 +66,8 @@ async function loadSetupContext(businessId) {
 }
 
 /**
- * Kurulum tamamsa isActive=true, değilse false (sahip manuel açamaz).
+ * Kurulum tamam + geçerli abonelik → isActive=true (sahip manuel açamaz).
+ * Ödeme başarısız / askıda → offline.
  */
 async function syncBusinessPublicActivation(businessId) {
   const ctx = await loadSetupContext(businessId);
@@ -74,7 +76,10 @@ async function syncBusinessPublicActivation(businessId) {
   const business = await Business.findById(businessId);
   if (!business) return null;
 
-  const shouldBeActive = ctx.setup.isComplete;
+  const billing = await getBusinessBilling(businessId);
+  const shouldBeActive =
+    ctx.setup.isComplete && !business.billingSuspended && billing.canAcceptBookings;
+
   const changed = business.isActive !== shouldBeActive;
   if (changed) {
     business.isActive = shouldBeActive;
@@ -85,6 +90,8 @@ async function syncBusinessPublicActivation(businessId) {
     businessId: String(businessId),
     isActive: business.isActive,
     setupComplete: ctx.setup.isComplete,
+    billingSuspended: Boolean(business.billingSuspended),
+    canAcceptBookings: billing.canAcceptBookings,
     percent: ctx.setup.percent,
     completed: ctx.setup.completed,
     total: ctx.setup.total,

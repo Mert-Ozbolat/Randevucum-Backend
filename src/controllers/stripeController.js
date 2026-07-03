@@ -14,8 +14,8 @@ const {
 const {
   clearBillingFailure,
   getBusinessBilling,
-  startPaymentGracePeriod,
   suspendBusinessBilling,
+  BILLING_NOTICE_PAYMENT_FAILED,
 } = require('../utils/subscriptionBilling');
 const { syncBusinessPublicActivation } = require('../utils/businessSetup');
 
@@ -228,6 +228,9 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
     subscription_data: {
       metadata: { businessId, userId: req.user._id.toString() },
     },
+    payment_settings: {
+      save_default_payment_method: 'on_subscription',
+    },
     allow_promotion_codes: true,
   };
 
@@ -331,11 +334,8 @@ exports.stripeWebhook = async (req, res) => {
         const sub = await stripe.subscriptions.retrieve(stripeSubId);
         const businessId = await resolveBusinessIdFromStripeSubscription(sub);
         if (!businessId) break;
-        const local = await Subscription.findOne({ stripeSubscriptionId: sub.id });
-        if (local) {
-          await startPaymentGracePeriod(businessId, local._id);
-        }
-        console.log('[stripe] invoice.payment_failed — grace started', { businessId, stripeSubId });
+        await suspendBusinessBilling(businessId, { notice: BILLING_NOTICE_PAYMENT_FAILED });
+        console.log('[stripe] invoice.payment_failed — business suspended', { businessId, stripeSubId });
         break;
       }
       case 'invoice.paid': {
