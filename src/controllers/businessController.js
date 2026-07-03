@@ -249,16 +249,22 @@ exports.listBusinesses = asyncHandler(async (req, res) => {
 /**
  * GET /business/discover — Keşfet reels (promo videosu olan aktif işletmeler)
  */
-exports.listDiscoverVideos = asyncHandler(async (_req, res) => {
-  const businesses = await Business.find({
+exports.listDiscoverVideos = asyncHandler(async (req, res) => {
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, rawLimit)) : null;
+
+  let query = Business.find({
     isActive: true,
     promoVideoUrl: { $exists: true, $nin: ['', null] },
   })
     .select(
       'name businessType description imageUrl address averageRating reviewCount promoVideoUrl promoVideoCaption promoVideoViews createdAt updatedAt'
     )
-    .sort({ updatedAt: -1 })
-    .lean();
+    .sort({ updatedAt: -1 });
+
+  if (limit) query = query.limit(limit);
+
+  const businesses = await query.lean();
 
   const data = businesses.filter((b) => String(b.promoVideoUrl || '').trim());
   return success(res, 200, data, 'OK');
