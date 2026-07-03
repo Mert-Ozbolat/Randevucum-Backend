@@ -7,6 +7,7 @@ const {
   createReservationRules,
   updateStatusRules,
   availableSlotsQueryRules,
+  blockedDatesQueryRules,
   reservationIdParamRules,
   businessIdParamRules,
   customerIdParamRules,
@@ -22,6 +23,13 @@ router.get(
   availableSlotsQueryRules(),
   validate,
   reservationController.getAvailableSlots
+);
+
+router.get(
+  '/blocked-dates',
+  blockedDatesQueryRules(),
+  validate,
+  reservationController.getBlockedDates
 );
 
 // Customer creates reservation - business must have active subscription

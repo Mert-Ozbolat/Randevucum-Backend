@@ -26,6 +26,14 @@ const breakTimeSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const exceptionDaySchema = new mongoose.Schema(
+  {
+    date: { type: Date, required: true }, // calendar day at 12:00 UTC
+    reason: { type: String, trim: true, default: '', maxlength: 120 },
+  },
+  { _id: false }
+);
+
 const businessSchema = new mongoose.Schema(
   {
     ownerId: {
@@ -116,6 +124,8 @@ const businessSchema = new mongoose.Schema(
     stripeCustomerId: { type: String, trim: true },
     workingHours: [workingHoursSchema],
     breakTimes: [breakTimeSchema],
+    /** Tarih bazlı işletme kapalı günleri (tatil, özel kapanış) */
+    closedDays: [exceptionDaySchema],
     /** Aynı saat diliminde birden fazla randevu (personel sayısından bağımsız üst sınır) */
     allowConcurrentBookings: {
       type: Boolean,

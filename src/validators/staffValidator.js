@@ -10,6 +10,7 @@ exports.createStaffRules = () => [
   body('serviceIds').optional().isArray(),
   body('serviceIds.*').optional().isMongoId(),
   body('workingHours').optional().isArray(),
+  body('leaveDays').optional().isArray(),
   body('canViewOwnReservations').optional().isBoolean(),
   body('linkUserEmail').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
 ];
@@ -23,6 +24,7 @@ exports.updateStaffRules = () => [
   body('imageUrl').optional().isString().trim(),
   body('serviceIds').optional().isArray(),
   body('isActive').optional().isBoolean(),
+  body('leaveDays').optional().isArray(),
   body('canViewOwnReservations').optional().isBoolean(),
   body('linkUserEmail').optional().trim(),
 ];

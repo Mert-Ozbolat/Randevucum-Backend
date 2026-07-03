@@ -4,6 +4,7 @@
  */
 
 const { SLOT_INTERVAL_MINUTES } = require('../config/constants');
+const { isBusinessClosedOnDate, isStaffOnLeave } = require('./availabilityExceptions');
 
 /**
  * Parse "HH:mm" to minutes since midnight
@@ -138,6 +139,9 @@ function getAvailableSlots(
   const { capacity = 1, selectedStaffId = null } = options;
   const d = new Date(date);
   const dayOfWeek = d.getUTCDay();
+
+  if (isBusinessClosedOnDate(business, d)) return [];
+  if (staff && isStaffOnLeave(staff, d)) return [];
 
   const workingHours = staff?.workingHours?.length
     ? staff.workingHours

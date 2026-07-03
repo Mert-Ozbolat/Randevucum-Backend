@@ -51,6 +51,13 @@ const staffSchema = new mongoose.Schema(
         isClosed: { type: Boolean, default: false },
       },
     ], // optional override per staff
+    /** Tarih bazlı izin / müsait değil günleri */
+    leaveDays: [
+      {
+        date: { type: Date, required: true },
+        reason: { type: String, trim: true, default: '', maxlength: 120 },
+      },
+    ],
     isActive: {
       type: Boolean,
       default: true,

@@ -11,6 +11,7 @@ const {
 } = require('../config/areaProfessionData');
 const { loadSetupContext, syncBusinessPublicActivation } = require('../utils/businessSetup');
 const { normalizePhoneForDatabase } = require('../utils/phone');
+const { normalizeExceptionDays } = require('../utils/availabilityExceptions');
 
 /**
  * POST /business - Create business (BusinessOwner only)
@@ -83,6 +84,7 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
     'imageUrl',
     'workingHours',
     'breakTimes',
+    'closedDays',
     'workingHoursConfigured',
   ];
   if (req.user.role === ROLES.SUPER_ADMIN && req.body.isActive !== undefined) {
@@ -109,6 +111,9 @@ exports.updateBusiness = asyncHandler(async (req, res) => {
   }
   if (req.body.workingHours !== undefined) {
     business.workingHoursConfigured = true;
+  }
+  if (req.body.closedDays !== undefined) {
+    business.closedDays = normalizeExceptionDays(req.body.closedDays) || [];
   }
 
   if (!business.businessType && business.profession) {

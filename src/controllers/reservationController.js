@@ -14,6 +14,14 @@ const { sendReservationBookingWhatsApp } = require('../services/whatsappReservat
 const { sendReservationApprovedWhatsApp } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
 const { getSlotCapacity } = require('../utils/bookingCapacity');
+const {
+  isBusinessClosedOnDate,
+  getBusinessClosedReason,
+  isStaffOnLeave,
+  getStaffLeaveReason,
+  exceptionDayKey,
+  eachCalendarDayKeys,
+} = require('../utils/availabilityExceptions');
 
 /**
  * Calculate end time from start time and duration
@@ -38,10 +46,21 @@ function isStaffEligibleForService(staffDoc, serviceDoc) {
   return services.some((id) => id.toString() === sid);
 }
 
-async function getEligibleStaffCount(businessId, serviceDoc) {
-  const list = await Staff.find({ businessId, isActive: true }).select('serviceIds').lean();
-  const eligible = list.filter((s) => isStaffEligibleForService({ ...s, _id: s._id }, serviceDoc));
-  return Math.max(1, eligible.length);
+async function getEligibleStaffForService(businessId, serviceDoc, reservationDate = null) {
+  const list = await Staff.find({ businessId, isActive: true }).lean();
+  return list.filter((s) => {
+    if (!isStaffEligibleForService(s, serviceDoc)) return false;
+    if (reservationDate && isStaffOnLeave(s, reservationDate)) return false;
+    return true;
+  });
+}
+
+async function getEligibleStaffCount(businessId, serviceDoc, reservationDate = null) {
+  const eligible = await getEligibleStaffForService(businessId, serviceDoc, reservationDate);
+  if (eligible.length > 0) return eligible.length;
+  const hasAnyStaff = await Staff.exists({ businessId, isActive: true });
+  if (!hasAnyStaff) return 1;
+  return 0;
 }
 
 /**
@@ -92,7 +111,14 @@ exports.createReservation = asyncHandler(async (req, res) => {
   const reservationDate = reservationDayToStoredDate(date);
   if (!reservationDate) return error(res, 400, 'Invalid date.');
 
-  const eligibleStaffCount = await getEligibleStaffCount(businessId, service);
+  if (isBusinessClosedOnDate(business, reservationDate)) {
+    return error(res, 403, getBusinessClosedReason(business, reservationDate) || 'Bu tarihte işletme kapalı.');
+  }
+
+  const eligibleStaffCount = await getEligibleStaffCount(businessId, service, reservationDate);
+  if (eligibleStaffCount === 0) {
+    return error(res, 403, 'Bu tarihte müsait personel yok.');
+  }
   const capacity = getSlotCapacity(business, eligibleStaffCount);
 
   const nextDay = nextReservationDayStoredDate(reservationDate);
@@ -119,6 +145,13 @@ exports.createReservation = asyncHandler(async (req, res) => {
     if (!staffMember) return error(res, 400, 'Invalid staff member.');
     if (!isStaffEligibleForService(staffMember, service)) {
       return error(res, 400, 'This staff member does not offer this service.');
+    }
+    if (isStaffOnLeave(staffMember, reservationDate)) {
+      return error(
+        res,
+        403,
+        getStaffLeaveReason(staffMember, reservationDate) || 'Seçilen personel bu tarihte izinli.'
+      );
     }
     const taken = overlapping.some(
       (r) => r.staffId && r.staffId.toString() === resolvedStaffId.toString()
@@ -180,6 +213,21 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
 
   const reservationDate = reservationDayToStoredDate(date);
   if (!reservationDate) return error(res, 400, 'Invalid date.');
+
+  if (isBusinessClosedOnDate(business, reservationDate)) {
+    return success(
+      res,
+      200,
+      {
+        slots: [],
+        date: reservationDate,
+        closed: true,
+        reason: getBusinessClosedReason(business, reservationDate),
+      },
+      'OK'
+    );
+  }
+
   const nextDay = nextReservationDayStoredDate(reservationDate);
 
   const existingQuery = {
@@ -197,9 +245,30 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
     if (!isStaffEligibleForService(staff, service)) {
       return error(res, 400, 'This staff member does not offer this service.');
     }
+    if (isStaffOnLeave(staff, reservationDate)) {
+      return success(
+        res,
+        200,
+        {
+          slots: [],
+          date: reservationDate,
+          staffOnLeave: true,
+          reason: getStaffLeaveReason(staff, reservationDate),
+        },
+        'OK'
+      );
+    }
   }
 
-  const eligibleStaffCount = await getEligibleStaffCount(businessId, service);
+  const eligibleStaffCount = await getEligibleStaffCount(businessId, service, reservationDate);
+  if (eligibleStaffCount === 0) {
+    return success(
+      res,
+      200,
+      { slots: [], date: reservationDate, noStaffAvailable: true },
+      'OK'
+    );
+  }
   const capacity = getSlotCapacity(business, eligibleStaffCount);
 
   const slots = getAvailableSlots(
@@ -212,6 +281,99 @@ exports.getAvailableSlots = asyncHandler(async (req, res) => {
   );
 
   return success(res, 200, { slots, date: reservationDate, service: { name: service.name, durationMinutes: service.durationMinutes } }, 'OK');
+});
+
+/**
+ * GET /reservations/blocked-dates — Takvimde seçilemeyecek günler (işletme kapalı + personel izin)
+ * Query: businessId, serviceId, staffId?, from?, to? (yyyy-MM-dd)
+ */
+exports.getBlockedDates = asyncHandler(async (req, res) => {
+  const { businessId, serviceId, staffId } = req.query;
+  if (!businessId || !serviceId) {
+    return error(res, 400, 'businessId and serviceId are required.');
+  }
+
+  const business = await Business.findById(businessId).select('closedDays').lean();
+  if (!business) return error(res, 404, 'Business not found.');
+  const service = await Service.findOne({ _id: serviceId, businessId, isActive: true }).lean();
+  if (!service) return error(res, 404, 'Service not found.');
+
+  const today = new Date();
+  const defaultFrom = reservationDayToStoredDate(
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  );
+  const defaultTo = reservationDayToStoredDate(
+    (() => {
+      const end = new Date(today);
+      end.setDate(end.getDate() + 60);
+      return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    })()
+  );
+
+  const fromStored = reservationDayToStoredDate(req.query.from) || defaultFrom;
+  const toStored = reservationDayToStoredDate(req.query.to) || defaultTo;
+  if (!fromStored || !toStored || fromStored.getTime() > toStored.getTime()) {
+    return error(res, 400, 'Invalid from/to date range.');
+  }
+
+  const dayKeys = eachCalendarDayKeys(fromStored, toStored);
+  const businessClosed = (business.closedDays || [])
+    .map((entry) => exceptionDayKey(entry.date))
+    .filter(Boolean);
+  const businessClosedSet = new Set(businessClosed);
+
+  let staffLeave = [];
+  if (staffId) {
+    const staff = await Staff.findOne({ _id: staffId, businessId, isActive: true })
+      .select('leaveDays serviceIds')
+      .lean();
+    if (!staff) return error(res, 404, 'Staff not found.');
+    if (!isStaffEligibleForService(staff, service)) {
+      return error(res, 400, 'This staff member does not offer this service.');
+    }
+    staffLeave = (staff.leaveDays || []).map((entry) => exceptionDayKey(entry.date)).filter(Boolean);
+  } else {
+    const eligibleStaff = await getEligibleStaffForService(businessId, service);
+    const leaveUnion = new Set();
+    for (const member of eligibleStaff) {
+      for (const entry of member.leaveDays || []) {
+        const key = exceptionDayKey(entry.date);
+        if (key) leaveUnion.add(key);
+      }
+    }
+    staffLeave = [...leaveUnion];
+  }
+
+  const staffLeaveSet = new Set(staffLeave);
+  const unavailable = [];
+
+  for (const key of dayKeys) {
+    const stored = reservationDayToStoredDate(key);
+    if (!stored) continue;
+    if (businessClosedSet.has(key)) {
+      unavailable.push(key);
+      continue;
+    }
+    if (staffId) {
+      if (staffLeaveSet.has(key)) unavailable.push(key);
+      continue;
+    }
+    const count = await getEligibleStaffCount(businessId, service, stored);
+    if (count === 0) unavailable.push(key);
+  }
+
+  return success(
+    res,
+    200,
+    {
+      unavailable,
+      businessClosed: businessClosed.filter((k) => dayKeys.includes(k)),
+      staffLeave: staffLeave.filter((k) => dayKeys.includes(k)),
+      from: exceptionDayKey(fromStored),
+      to: exceptionDayKey(toStored),
+    },
+    'OK'
+  );
 });
 
 /**

@@ -6,6 +6,7 @@ const { asyncHandler } = require('../utils/errors');
 const { ROLES } = require('../config/constants');
 const { getStaffQuota } = require('../utils/subscriptionLimits');
 const { syncBusinessPublicActivation } = require('../utils/businessSetup');
+const { normalizeExceptionDays } = require('../utils/availabilityExceptions');
 
 const canManageStaff = (req, business) => {
   if (req.user.role === ROLES.SUPER_ADMIN) return true;
@@ -81,6 +82,7 @@ exports.updateStaff = asyncHandler(async (req, res) => {
     'imageUrl',
     'serviceIds',
     'workingHours',
+    'leaveDays',
     'isActive',
   ];
   allowed.forEach((key) => {
@@ -94,6 +96,9 @@ exports.updateStaff = asyncHandler(async (req, res) => {
 
   if (req.body.canViewOwnReservations !== undefined) {
     staff.canViewOwnReservations = Boolean(req.body.canViewOwnReservations);
+  }
+  if (req.body.leaveDays !== undefined) {
+    staff.leaveDays = normalizeExceptionDays(req.body.leaveDays) || [];
   }
 
   let message = 'Güncellendi.';

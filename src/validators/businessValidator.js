@@ -16,6 +16,7 @@ exports.createBusinessRules = () => [
   body('description').optional().trim(),
   body('workingHours').optional().isArray(),
   body('breakTimes').optional().isArray(),
+  body('closedDays').optional().isArray(),
 ];
 
 exports.updateBusinessRules = () => [
@@ -32,6 +33,7 @@ exports.updateBusinessRules = () => [
   body('email').optional().isEmail().normalizeEmail(),
   body('workingHours').optional().isArray(),
   body('breakTimes').optional().isArray(),
+  body('closedDays').optional().isArray(),
   body('isActive').optional().isBoolean(),
   body('description').optional().trim(),
   body('imageUrl').optional().isString(),

@@ -28,6 +28,14 @@ exports.availableSlotsQueryRules = () => [
   query('staffId').optional().isMongoId(),
 ];
 
+exports.blockedDatesQueryRules = () => [
+  query('businessId').isMongoId().withMessage('Valid business ID is required'),
+  query('serviceId').isMongoId().withMessage('Valid service ID is required'),
+  query('staffId').optional().isMongoId(),
+  query('from').optional().isISO8601(),
+  query('to').optional().isISO8601(),
+];
+
 exports.reservationIdParamRules = () => [
   param('id').isMongoId().withMessage('Invalid reservation ID'),
 ];
