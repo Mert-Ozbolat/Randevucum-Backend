@@ -88,6 +88,7 @@ reservationSchema.index({ businessId: 1, date: 1, time: 1 });
 reservationSchema.index({ customerId: 1 });
 reservationSchema.index({ staffId: 1, date: 1 });
 reservationSchema.index({ businessId: 1, status: 1 });
+reservationSchema.index({ businessId: 1, createdAt: 1, status: 1 });
 reservationSchema.index({ date: 1, time: 1, status: 1 });
 
 module.exports = mongoose.model('Reservation', reservationSchema);

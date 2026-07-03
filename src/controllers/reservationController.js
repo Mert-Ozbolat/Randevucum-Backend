@@ -13,6 +13,7 @@ const { ROLES } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
 const { getSlotCapacity } = require('../utils/bookingCapacity');
+const { getReservationQuota } = require('../utils/subscriptionLimits');
 const {
   canCustomerCancelReservation,
   CUSTOMER_CANCEL_HOURS_BEFORE,
@@ -163,6 +164,15 @@ exports.createReservation = asyncHandler(async (req, res) => {
     if (taken) {
       return error(res, 409, 'This staff member is already booked at this time.');
     }
+  }
+
+  const reservationQuota = await getReservationQuota(businessId);
+  if (!reservationQuota.canAccept) {
+    return error(
+      res,
+      403,
+      `Bu işletme standart paket aylık randevu limitine ulaştı (${reservationQuota.limit}/ay). PRO pakete geçilerek sınırsız randevu alınabilir.`
+    );
   }
 
   const reservation = await Reservation.create({

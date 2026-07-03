@@ -4,7 +4,7 @@ const { success, error } = require('../utils/response');
 const { asyncHandler } = require('../utils/errors');
 const { SUBSCRIPTION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
-const { getStaffQuota } = require('../utils/subscriptionLimits');
+const { getStaffQuota, getReservationQuota } = require('../utils/subscriptionLimits');
 const { getStripe } = require('../config/stripe');
 const { getBusinessBilling } = require('../utils/subscriptionBilling');
 
@@ -68,6 +68,7 @@ exports.getStatus = asyncHandler(async (req, res) => {
 
   const billing = await getBusinessBilling(businessId);
   const quota = await getStaffQuota(businessId);
+  const reservationQuota = await getReservationQuota(businessId);
   const sub = billing.subscription;
 
   return success(
@@ -86,6 +87,11 @@ exports.getStatus = asyncHandler(async (req, res) => {
       staffLimit: quota.limit,
       staffCount: quota.current,
       canAddStaff: quota.canAdd,
+      reservationLimit: reservationQuota.limit,
+      reservationCount: reservationQuota.current,
+      canAcceptMoreReservations: reservationQuota.canAccept,
+      reservationMonthStart: reservationQuota.monthStart,
+      reservationMonthEnd: reservationQuota.monthEnd,
       isTrial: billing.isTrial,
       trialExpired: billing.trialExpired,
       needsRenewal: billing.needsRenewal,
