@@ -1,5 +1,5 @@
 const { body, param, query, validationResult } = require('express-validator');
-const { RESERVATION_STATUS } = require('../config/constants');
+const { RESERVATION_STATUS, ATTENDANCE_OUTCOME } = require('../config/constants');
 
 exports.createReservationRules = () => [
   body('businessId').isMongoId().withMessage('Valid business ID is required'),
@@ -19,6 +19,14 @@ exports.createReservationRules = () => [
 exports.updateStatusRules = () => [
   param('id').isMongoId().withMessage('Invalid reservation ID'),
   body('status').isIn([RESERVATION_STATUS.CANCELED]).withMessage('Status must be canceled'),
+];
+
+exports.markAttendanceRules = () => [
+  param('id').isMongoId().withMessage('Invalid reservation ID'),
+  body('outcome')
+    .isIn([ATTENDANCE_OUTCOME.ATTENDED, ATTENDANCE_OUTCOME.NO_SHOW])
+    .withMessage('Outcome must be attended or no_show'),
+  body('note').optional().trim().isLength({ max: 500 }),
 ];
 
 exports.availableSlotsQueryRules = () => [

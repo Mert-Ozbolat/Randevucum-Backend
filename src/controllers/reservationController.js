@@ -10,7 +10,13 @@ const { getAvailableSlots, normalizeTimeStr, findOverlappingReservations, getSta
 const { reservationDayToStoredDate, nextReservationDayStoredDate } = require('../utils/calendarDate');
 const { RESERVATION_STATUS } = require('../config/constants');
 const { ROLES } = require('../config/constants');
+const { ATTENDANCE_OUTCOME } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
+const { sendNoShowWarningWhatsApp } = require('../services/attendanceNotify');
+const {
+  isReservationPastEnd,
+  updateCustomerAttendanceStats,
+} = require('../utils/attendanceService');
 const { waLog } = require('../utils/whatsappLog');
 const { getSlotCapacity } = require('../utils/bookingCapacity');
 const { getReservationQuota } = require('../utils/subscriptionLimits');
@@ -421,7 +427,7 @@ exports.getReservationsByBusiness = asyncHandler(async (req, res) => {
   const reservations = await Reservation.find(filter)
     .populate('serviceId', 'name durationMinutes price priceMin priceMax currency')
     .populate('staffId', 'name title')
-    .populate('customerId', 'firstName lastName email phone')
+    .populate('customerId', 'firstName lastName email phone attendanceStats')
     .sort({ date: 1, time: 1 })
     .lean();
   return success(res, 200, reservations, 'OK');
@@ -609,4 +615,73 @@ exports.getReservation = asyncHandler(async (req, res) => {
   }
 
   return success(res, 200, reservation, 'OK');
+});
+
+/**
+ * PATCH /reservations/:id/attendance — İşletme: randevuya gelme durumunu işaretle
+ * Body: { outcome: 'attended' | 'no_show', note? }
+ */
+exports.markReservationAttendance = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { outcome, note } = req.body;
+
+  if (![ATTENDANCE_OUTCOME.ATTENDED, ATTENDANCE_OUTCOME.NO_SHOW].includes(outcome)) {
+    return error(res, 400, 'Geçersiz katılım durumu.');
+  }
+
+  const reservation = await Reservation.findById(id);
+  if (!reservation) return error(res, 404, 'Reservation not found.');
+
+  const business = await Business.findById(reservation.businessId);
+  if (!business) return error(res, 404, 'Business not found.');
+  if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
+    return error(res, 403, 'You do not own this business.');
+  }
+
+  if (reservation.status === RESERVATION_STATUS.CANCELED) {
+    return error(res, 400, 'İptal edilmiş randevu için katılım işaretlenemez.');
+  }
+
+  if (!isReservationPastEnd(reservation)) {
+    return error(res, 400, 'Randevu henüz bitmedi. Katılım işaretlemesi randevu saati geçtikten sonra yapılabilir.');
+  }
+
+  const previousOutcome = reservation.attendance?.outcome || null;
+
+  reservation.attendance = {
+    outcome,
+    markedAt: new Date(),
+    markedBy: req.user._id,
+    note: note ? String(note).trim().slice(0, 500) : '',
+  };
+
+  reservation.status =
+    outcome === ATTENDANCE_OUTCOME.NO_SHOW
+      ? RESERVATION_STATUS.NO_SHOW
+      : RESERVATION_STATUS.COMPLETED;
+
+  await reservation.save();
+
+  const updatedStats = await updateCustomerAttendanceStats(
+    reservation.customerId,
+    previousOutcome,
+    outcome
+  );
+
+  if (outcome === ATTENDANCE_OUTCOME.NO_SHOW && previousOutcome !== ATTENDANCE_OUTCOME.NO_SHOW) {
+    sendNoShowWarningWhatsApp(reservation._id).catch(() => {});
+  }
+
+  await reservation.populate([
+    { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
+    { path: 'staffId', select: 'name title' },
+    { path: 'customerId', select: 'firstName lastName email phone attendanceStats' },
+  ]);
+
+  const result = reservation.toObject ? reservation.toObject() : reservation;
+  if (result.customerId && updatedStats) {
+    result.customerId.attendanceStats = updatedStats;
+  }
+
+  return success(res, 200, result, 'Katılım durumu kaydedildi.');
 });

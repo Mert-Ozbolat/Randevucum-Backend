@@ -6,6 +6,7 @@ const { requireBusinessOwnership } = require('../middleware/ownership');
 const {
   createReservationRules,
   updateStatusRules,
+  markAttendanceRules,
   availableSlotsQueryRules,
   blockedDatesQueryRules,
   reservationIdParamRules,
@@ -86,6 +87,15 @@ router.patch(
   updateStatusRules(),
   validate,
   reservationController.updateReservationStatus
+);
+
+// Business owner: mark attendance (attended / no_show)
+router.patch(
+  '/:id/attendance',
+  protect,
+  markAttendanceRules(),
+  validate,
+  reservationController.markReservationAttendance
 );
 
 // Customer or owner: cancel reservation

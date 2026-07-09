@@ -189,6 +189,35 @@ function buildBusinessBookingMessage({
   return lines.join('\n');
 }
 
+function buildCustomerNoShowWarningMessage({
+  businessName,
+  dateKey,
+  time,
+  serviceName,
+  attendanceRate,
+  noShowCount,
+  totalMarked,
+  warningText,
+}) {
+  const lines = [
+    `${waBold('Randevuya gelmediniz')} ⚠️`,
+    '',
+    waLine('İşletme', businessName || 'İşletme'),
+    waLine('Tarih', formatDateTr(dateKey)),
+    waLine('Saat', time),
+    waLine('Hizmet', serviceName || 'Hizmet'),
+    '',
+    `${waBold('Katılım oranınız')}: %${attendanceRate}`,
+    `Gelmediğiniz randevu: ${noShowCount} / ${totalMarked}`,
+    '',
+    warningText ||
+      'Randevunuza gelemeyecekseniz lütfen önceden iptal edin. Tekrarlayan gelmeme durumunda hesabınız kısıtlanabilir.',
+    '',
+    'Randevularınızı panelinizden takip edebilirsiniz.',
+  ];
+  return lines.join('\n');
+}
+
 module.exports = {
   toYmd,
   formatDateTr,
@@ -201,4 +230,5 @@ module.exports = {
   buildCustomerBookingMessage,
   buildCustomerApprovedMessage,
   buildBusinessBookingMessage,
+  buildCustomerNoShowWarningMessage,
 };

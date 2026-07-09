@@ -52,6 +52,17 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Randevuya gelme istatistikleri (işletmeler tarafından işaretlenir) */
+    attendanceStats: {
+      totalMarked: { type: Number, default: 0 },
+      attendedCount: { type: Number, default: 0 },
+      noShowCount: { type: Number, default: 0 },
+      /** Katılım yüzdesi 0–100 */
+      attendanceRate: { type: Number, default: 100 },
+      warningCount: { type: Number, default: 0 },
+      lastWarningAt: { type: Date, default: null },
+      lastNoShowAt: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,

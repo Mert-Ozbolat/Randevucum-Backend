@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { RESERVATION_STATUS } = require('../config/constants');
+const { RESERVATION_STATUS, ATTENDANCE_OUTCOME } = require('../config/constants');
 
 const reservationSchema = new mongoose.Schema(
   {
@@ -56,6 +56,16 @@ const reservationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
+    },
+    attendance: {
+      outcome: {
+        type: String,
+        enum: [ATTENDANCE_OUTCOME.ATTENDED, ATTENDANCE_OUTCOME.NO_SHOW, null],
+        default: null,
+      },
+      markedAt: { type: Date, default: null },
+      markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      note: { type: String, trim: true, default: '' },
     },
     reminders: {
       /** WhatsApp reminder to customer (end-user) */

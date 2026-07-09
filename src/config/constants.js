@@ -74,6 +74,13 @@ const RESERVATION_STATUS = {
   APPROVED: 'approved',
   CANCELED: 'canceled',
   COMPLETED: 'completed',
+  NO_SHOW: 'no_show',
+};
+
+// Attendance outcome (işletme tarafından işaretlenir)
+const ATTENDANCE_OUTCOME = {
+  ATTENDED: 'attended',
+  NO_SHOW: 'no_show',
 };
 
 // Default slot interval in minutes
@@ -87,6 +94,7 @@ module.exports = {
   BUSINESS_TYPES,
   SUBSCRIPTION_STATUS,
   RESERVATION_STATUS,
+  ATTENDANCE_OUTCOME,
   SLOT_INTERVAL_MINUTES,
   CUSTOMER_CANCEL_HOURS_BEFORE,
 };
