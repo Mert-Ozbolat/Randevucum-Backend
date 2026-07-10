@@ -1,6 +1,7 @@
 const Reservation = require('../models/Reservation');
 const Subscription = require('../models/Subscription');
-const { sendWhatsApp } = require('../services/whatsapp');
+const { sendWhatsApp, sendWhatsAppRsvpPrompt } = require('../services/whatsapp');
+const { buildRsvpButtonIds } = require('../services/whatsappRsvp');
 const { resolveProPriceIds } = require('../config/stripe');
 const {
   toYmd,
@@ -8,6 +9,7 @@ const {
   buildBusinessReminderMessage,
   buildCustomerReminderRsvpMessage,
   buildCustomer24hReminderMessage,
+  formatDateTr,
 } = require('../services/whatsappReservationMessages');
 const {
   resolveBusinessPhone,
@@ -166,16 +168,38 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         // Don't send the "soon" reminder when we're only in the 24h window.
       } else {
       anyAttempt = true;
+      const rsvpCode = String(r._id).slice(-6).toUpperCase();
+      const buttonIds = buildRsvpButtonIds(r._id);
+      const businessName = business?.name || 'İşletme';
+      const serviceName = service?.name || 'Hizmet';
       const msg = buildCustomerReminderRsvpMessage({
-        businessName: business?.name || 'İşletme',
+        businessName,
         dateKey,
         time: r.time,
-        serviceName: service?.name || 'Hizmet',
-        rsvpCode: String(r._id).slice(-6).toUpperCase(),
+        serviceName,
+        rsvpCode,
+        interactive: true,
       });
-      const res = await sendWhatsApp({
+      const textFallbackBody = buildCustomerReminderRsvpMessage({
+        businessName,
+        dateKey,
+        time: r.time,
+        serviceName,
+        rsvpCode,
+        interactive: false,
+      });
+      const res = await sendWhatsAppRsvpPrompt({
         toPhone: customerPhone,
         body: msg,
+        textFallbackBody,
+        yesButtonId: buttonIds.yes,
+        noButtonId: buttonIds.no,
+        templateBodyParams: [
+          businessName,
+          formatDateTr(dateKey),
+          r.time,
+          serviceName,
+        ],
         tag: `reservation:${r._id}:customer:reminder`,
       });
       sendAttempts.push({

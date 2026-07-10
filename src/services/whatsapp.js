@@ -3,10 +3,10 @@ const { waLog } = require('../utils/whatsappLog');
 
 /**
  * WhatsApp delivery channel.
- * Default is UltraMsg (`ultramsg`). Alternatives: `meta` (Cloud API).
+ * Default is Meta Cloud API (`meta`). Alternatives: `ultramsg`.
  */
 function getProvider() {
-  return String(process.env.WHATSAPP_PROVIDER || 'ultramsg').trim().toLowerCase();
+  return String(process.env.WHATSAPP_PROVIDER || 'meta').trim().toLowerCase();
 }
 
 function isUltraMsgConfigured() {
@@ -131,7 +131,7 @@ async function sendViaUltraMsg({ toE164, body, tag }) {
   }
 }
 
-async function sendViaMetaCloud({ toE164, body, tag }) {
+async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
   const token = process.env.WHATSAPP_CLOUD_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const version = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
@@ -140,12 +140,31 @@ async function sendViaMetaCloud({ toE164, body, tag }) {
   }
 
   const url = `https://graph.facebook.com/${version}/${phoneNumberId}/messages`;
-  const payload = {
-    messaging_product: 'whatsapp',
-    to: toE164.replace(/^\+/, ''),
-    type: 'text',
-    text: { preview_url: false, body },
-  };
+  const to = toE164.replace(/^\+/, '');
+
+  let payload;
+  if (template) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template,
+    };
+  } else if (interactive) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive,
+    };
+  } else {
+    payload = {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { preview_url: false, body },
+    };
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -171,10 +190,10 @@ async function sendViaMetaCloud({ toE164, body, tag }) {
 }
 
 function resolveActiveProvider(requested) {
-  const order = ['ultramsg', 'meta'];
+  const order = ['meta', 'ultramsg'];
   const configured = {
-    ultramsg: isUltraMsgConfigured(),
     meta: isMetaConfigured(),
+    ultramsg: isUltraMsgConfigured(),
   };
 
   if (configured[requested]) return requested;
@@ -185,6 +204,136 @@ function resolveActiveProvider(requested) {
     return fallback;
   }
   return requested;
+}
+
+/**
+ * Meta interactive Evet/Hayır butonlu mesaj.
+ * buttons: [{ id, title }] — title max 20 karakter
+ */
+async function sendWhatsAppInteractive({ toPhone, body, buttons, tag }) {
+  const to = normalizeE164Tr(toPhone);
+  if (!to) {
+    return { ok: false, skipped: true, reason: 'invalid_phone' };
+  }
+  if (!isEnabled()) {
+    waLog('📴', 'DRY-RUN interactive', { tag, to, buttons: buttons?.length });
+    return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
+  }
+
+  const provider = resolveActiveProvider(getProvider());
+  if (provider !== 'meta') {
+    return { ok: false, reason: 'interactive_requires_meta' };
+  }
+
+  const interactive = {
+    type: 'button',
+    body: { text: String(body || '').slice(0, 1024) },
+    action: {
+      buttons: (buttons || []).slice(0, 3).map((b) => ({
+        type: 'reply',
+        reply: {
+          id: String(b.id).slice(0, 256),
+          title: String(b.title).slice(0, 20),
+        },
+      })),
+    },
+  };
+
+  waLog('📤', 'Meta interactive gönderim', { tag, to });
+  const res = await sendViaMetaCloud({ toE164: to, tag, interactive });
+  if (res.ok) waLog('✅', 'Meta interactive gönderildi', { tag, messageId: res.messageId });
+  else waLog('❌', 'Meta interactive hata', { tag, message: res.message });
+  return res;
+}
+
+/**
+ * Onaylı Meta şablonu ile RSVP hatırlatması (24 saat kuralı dışı mesajlar için).
+ * WHATSAPP_TEMPLATE_RSVP_NAME ve body parametreleri gerekir.
+ */
+async function sendWhatsAppRsvpTemplate({
+  toPhone,
+  templateName,
+  languageCode,
+  bodyParams,
+  buttonPayloads,
+  tag,
+}) {
+  const to = normalizeE164Tr(toPhone);
+  if (!to) return { ok: false, skipped: true, reason: 'invalid_phone' };
+  if (!isEnabled()) return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
+
+  const name = templateName || process.env.WHATSAPP_TEMPLATE_RSVP_NAME;
+  const lang = languageCode || process.env.WHATSAPP_TEMPLATE_RSVP_LANG || 'tr';
+  if (!name) return { ok: false, reason: 'template_not_configured' };
+
+  const components = [];
+  if (bodyParams?.length) {
+    components.push({
+      type: 'body',
+      parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })),
+    });
+  }
+  (buttonPayloads || []).forEach((payload, index) => {
+    components.push({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: String(index),
+      parameters: [{ type: 'payload', payload: String(payload).slice(0, 256) }],
+    });
+  });
+
+  const template = {
+    name,
+    language: { code: lang },
+    ...(components.length ? { components } : {}),
+  };
+
+  waLog('📤', 'Meta template RSVP gönderim', { tag, to, template: name });
+  return sendViaMetaCloud({ toE164: to, tag, template });
+}
+
+/**
+ * RSVP hatırlatması: Meta'da önce template, yoksa interactive; UltraMsg'de metin (ONAY/IPTAL).
+ */
+async function sendWhatsAppRsvpPrompt({
+  toPhone,
+  body,
+  textFallbackBody,
+  yesButtonId,
+  noButtonId,
+  templateBodyParams,
+  tag,
+}) {
+  const provider = resolveActiveProvider(getProvider());
+  const templateName = process.env.WHATSAPP_TEMPLATE_RSVP_NAME;
+  const textBody = textFallbackBody || body;
+
+  if (provider === 'meta' && templateName) {
+    const res = await sendWhatsAppRsvpTemplate({
+      toPhone,
+      bodyParams: templateBodyParams,
+      buttonPayloads: [yesButtonId, noButtonId],
+      tag,
+    });
+    if (res.ok || res.dryRun) return res;
+    waLog('⚠️', 'Template gönderilemedi, interactive deneniyor', { message: res.message });
+  }
+
+  if (provider === 'meta') {
+    const res = await sendWhatsAppInteractive({
+      toPhone,
+      body,
+      buttons: [
+        { id: yesButtonId, title: 'Evet, geleceğim' },
+        { id: noButtonId, title: 'Hayır, iptal et' },
+      ],
+      tag,
+    });
+    if (res.ok || res.dryRun) return res;
+    waLog('⚠️', 'Interactive gönderilemedi, düz metne düşülüyor', { message: res.message });
+  }
+
+  return sendWhatsApp({ toPhone, body: textBody, tag });
 }
 
 /**
@@ -211,16 +360,16 @@ async function sendWhatsApp({ toPhone, body, tag }) {
     return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
   }
 
-  if (provider === 'ultramsg' && !isUltraMsgConfigured() && isMetaConfigured()) {
-    provider = 'meta';
-  } else if (provider === 'meta' && !isMetaConfigured() && isUltraMsgConfigured()) {
+  if (provider === 'meta' && !isMetaConfigured() && isUltraMsgConfigured()) {
     provider = 'ultramsg';
+  } else if (provider === 'ultramsg' && !isUltraMsgConfigured() && isMetaConfigured()) {
+    provider = 'meta';
   }
 
-  if (provider === 'ultramsg' && !isUltraMsgConfigured() && !isMetaConfigured()) {
+  if (!isMetaConfigured() && !isUltraMsgConfigured()) {
     waLog('❌', 'WhatsApp yapılandırılmamış', {
       tag,
-      hint: 'ULTRAMSG_INSTANCE_ID + ULTRAMSG_TOKEN veya Meta WHATSAPP_CLOUD_TOKEN ayarlayın',
+      hint: 'WHATSAPP_CLOUD_TOKEN + WHATSAPP_PHONE_NUMBER_ID veya UltraMsg ayarlayın',
     });
     return { ok: false, skipped: true, reason: 'whatsapp_not_configured' };
   }
@@ -257,15 +406,19 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   waLog('❌', 'Bilinmeyen WHATSAPP_PROVIDER', {
     tag,
     provider,
-    hint: 'ultramsg veya meta kullanın (WHATSAPP_PROVIDER=ultramsg)',
+    hint: 'meta veya ultramsg kullanın (WHATSAPP_PROVIDER=meta)',
   });
   return { ok: false, reason: 'unknown_provider', provider };
 }
 
 module.exports = {
   sendWhatsApp,
+  sendWhatsAppInteractive,
+  sendWhatsAppRsvpTemplate,
+  sendWhatsAppRsvpPrompt,
   normalizeE164Tr,
   isEnabled,
   isUltraMsgConfigured,
   isMetaConfigured,
+  getProvider,
 };

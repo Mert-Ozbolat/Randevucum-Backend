@@ -15,6 +15,8 @@ const favoriteRoutes = require('./routes/favoriteRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const ultramsgWebhookRoutes = require('./routes/ultramsgWebhookRoutes');
+const metaWhatsAppWebhookController = require('./controllers/metaWhatsAppWebhookController');
+const { verifyMetaWhatsAppSignature } = require('./middleware/metaWhatsAppAuth');
 const stripeController = require('./controllers/stripeController');
 const {
   helmetMiddleware,
@@ -65,6 +67,15 @@ app.post(
   '/webhook',
   express.raw({ type: 'application/json', limit: '1mb' }),
   stripeController.stripeWebhook
+);
+
+// Meta WhatsApp webhook — ham gövde (imza doğrulama)
+app.get('/whatsapp/webhook/meta', metaWhatsAppWebhookController.metaVerify);
+app.post(
+  '/whatsapp/webhook/meta',
+  express.raw({ type: 'application/json', limit: '1mb' }),
+  verifyMetaWhatsAppSignature,
+  metaWhatsAppWebhookController.metaIncoming
 );
 
 app.use(blockSuspiciousQuery);

@@ -44,7 +44,7 @@ function buildCustomerReminderMessage({ businessName, dateKey, time, serviceName
   return lines.join('\n');
 }
 
-function buildCustomerReminderRsvpMessage({ businessName, dateKey, time, serviceName, rsvpCode }) {
+function buildCustomerReminderRsvpMessage({ businessName, dateKey, time, serviceName, rsvpCode, interactive }) {
   const code = waEscape(rsvpCode || '');
   const lines = [
     `${waBold('Randevu hatırlatması')} 🔔`,
@@ -54,13 +54,21 @@ function buildCustomerReminderRsvpMessage({ businessName, dateKey, time, service
     waLine('Saat', time),
     waLine('Hizmet', serviceName || 'Hizmet'),
     '',
-    `${waBold('Geliyor musunuz?')}`,
-    '',
-    `✅ Geliyorum: ${waBold(`ONAY ${code}`)}`,
-    `❌ İptal: ${waBold(`IPTAL ${code}`)} (iptal için 2. adımda onay isteyeceğiz)`,
-    '',
-    'Not: Yanıtınız işletmeye bildirilecektir.',
+    `${waBold('Randevunuza gelecek misiniz?')}`,
   ];
+
+  if (interactive) {
+    lines.push('', 'Lütfen aşağıdaki butonlardan birini seçin. Yanıtınız işletmeye bildirilecektir.');
+  } else {
+    lines.push(
+      '',
+      `✅ Geliyorum: ${waBold(`ONAY ${code}`)}`,
+      `❌ İptal: ${waBold(`IPTAL ${code}`)}`,
+      '',
+      'Not: Yanıtınız işletmeye bildirilecektir.'
+    );
+  }
+
   return lines.join('\n');
 }
 
