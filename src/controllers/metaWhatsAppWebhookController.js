@@ -2,6 +2,7 @@ const { asyncHandler } = require('../utils/errors');
 const { success, error } = require('../utils/response');
 const { processIncomingRsvp } = require('../services/whatsappRsvp');
 const { waLog } = require('../utils/whatsappLog');
+const { timingSafeEqualString } = require('../middleware/jobsAuth');
 
 function extractMetaIncomingMessages(body) {
   const messages = [];
@@ -48,21 +49,48 @@ function extractRsvpPayloadFromMessage(msg) {
   return null;
 }
 
+function readMetaHubParam(req, dottedKey, underscoreKey, nestedKey) {
+  const q = req.query || {};
+  if (q[dottedKey] != null && q[dottedKey] !== '') return String(q[dottedKey]);
+  if (q[underscoreKey] != null && q[underscoreKey] !== '') return String(q[underscoreKey]);
+  if (q.hub && typeof q.hub === 'object' && q.hub[nestedKey] != null) {
+    return String(q.hub[nestedKey]);
+  }
+  return '';
+}
+
 /** Meta webhook doğrulama (GET) */
 exports.metaVerify = (req, res) => {
-  const mode = String(req.query['hub.mode'] || '');
-  const token = String(req.query['hub.verify_token'] || '');
-  const challenge = req.query['hub.challenge'];
+  const mode = readMetaHubParam(req, 'hub.mode', 'hub_mode', 'mode');
+  const token = readMetaHubParam(req, 'hub.verify_token', 'hub_verify_token', 'verify_token').trim();
+  const challengeRaw = readMetaHubParam(req, 'hub.challenge', 'hub_challenge', 'challenge');
+  const challenge = challengeRaw || req.query['hub.challenge'] || req.query.hub_challenge;
 
   const expected = String(process.env.WHATSAPP_VERIFY_TOKEN || '').trim();
   if (!expected) {
     return error(res, 503, 'WHATSAPP_VERIFY_TOKEN is not configured.');
   }
 
-  if (mode === 'subscribe' && token === expected && challenge != null) {
+  const modeOk = mode === 'subscribe';
+  const tokenOk = token && timingSafeEqualString(token, expected);
+  const challengeOk = challenge != null && String(challenge).length > 0;
+
+  if (modeOk && tokenOk && challengeOk) {
     waLog('🔗', 'Meta webhook doğrulandı');
-    return res.status(200).send(String(challenge));
+    return res.status(200).type('text/plain').send(String(challenge));
   }
+
+  waLog('⚠️', 'Meta webhook doğrulama başarısız', {
+    modeOk,
+    tokenOk,
+    challengeOk,
+    mode: mode || '(empty)',
+    tokenLength: token.length,
+    expectedLength: expected.length,
+    hint: !tokenOk
+      ? 'WHATSAPP_VERIFY_TOKEN ile Meta panelindeki Verify token birebir aynı olmalı (EAA access token değil).'
+      : undefined,
+  });
 
   return error(res, 403, 'Verification failed.');
 };
