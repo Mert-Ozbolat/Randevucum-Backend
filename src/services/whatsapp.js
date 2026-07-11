@@ -392,7 +392,16 @@ async function sendWhatsAppInteractive({ toPhone, body, buttons, tag }) {
 /**
  * Meta Cloud API ile onaylı şablon mesajı.
  */
-async function sendWhatsAppTemplate({ toPhone, templateName, languageCode, bodyParams, tag }) {
+async function sendWhatsAppTemplate({
+  toPhone,
+  templateName,
+  languageCode,
+  bodyParams,
+  bodyParamNames,
+  headerLocation,
+  urlButtons,
+  tag,
+}) {
   const to = normalizeE164Tr(toPhone);
   if (!to) return { ok: false, skipped: true, reason: 'invalid_phone' };
   if (!isEnabled()) return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
@@ -400,12 +409,45 @@ async function sendWhatsAppTemplate({ toPhone, templateName, languageCode, bodyP
 
   const lang = languageCode || process.env.WHATSAPP_TEMPLATE_LANG || 'tr';
   const components = [];
-  if (bodyParams?.length) {
+
+  if (headerLocation?.latitude != null && headerLocation?.longitude != null) {
     components.push({
-      type: 'body',
-      parameters: bodyParams.map((text) => ({ type: 'text', text: String(text).slice(0, 1024) })),
+      type: 'header',
+      parameters: [
+        {
+          type: 'location',
+          location: {
+            latitude: String(headerLocation.latitude),
+            longitude: String(headerLocation.longitude),
+            name: String(headerLocation.name || 'Isletme').slice(0, 256),
+            address: String(headerLocation.address || '').slice(0, 256),
+          },
+        },
+      ],
     });
   }
+
+  if (bodyParams?.length) {
+    const names = Array.isArray(bodyParamNames) ? bodyParamNames : [];
+    components.push({
+      type: 'body',
+      parameters: bodyParams.map((text, index) => {
+        const param = { type: 'text', text: String(text).slice(0, 1024) };
+        if (names[index]) param.parameter_name = String(names[index]);
+        return param;
+      }),
+    });
+  }
+  (urlButtons || []).forEach((btn) => {
+    const param = { type: 'text', text: String(btn.text ?? '').slice(0, 2000) };
+    if (btn.parameterName) param.parameter_name = String(btn.parameterName);
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: String(btn.index ?? 0),
+      parameters: [param],
+    });
+  });
 
   const template = {
     name: templateName,
@@ -413,7 +455,13 @@ async function sendWhatsAppTemplate({ toPhone, templateName, languageCode, bodyP
     ...(components.length ? { components } : {}),
   };
 
-  waLog('📤', 'Meta template gönderim', { tag, to, template: templateName });
+  waLog('📤', 'Meta template gönderim', {
+    tag,
+    to,
+    template: templateName,
+    urlButtons: urlButtons?.length || 0,
+    hasLocationHeader: Boolean(headerLocation),
+  });
   return sendViaMetaCloud({ toE164: to, tag, template });
 }
 
@@ -425,6 +473,7 @@ async function sendWhatsAppRsvpTemplate({
   templateName,
   languageCode,
   bodyParams,
+  bodyParamNames,
   buttonPayloads,
   tag,
 }) {
@@ -438,9 +487,14 @@ async function sendWhatsAppRsvpTemplate({
 
   const components = [];
   if (bodyParams?.length) {
+    const names = Array.isArray(bodyParamNames) ? bodyParamNames : [];
     components.push({
       type: 'body',
-      parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })),
+      parameters: bodyParams.map((text, index) => {
+        const param = { type: 'text', text: String(text).slice(0, 1024) };
+        if (names[index]) param.parameter_name = String(names[index]);
+        return param;
+      }),
     });
   }
   (buttonPayloads || []).forEach((payload, index) => {
@@ -471,17 +525,21 @@ async function sendWhatsAppRsvpPrompt({
   textFallbackBody,
   yesButtonId,
   noButtonId,
+  templateName,
   templateBodyParams,
+  templateBodyParamNames,
   tag,
 }) {
   const provider = resolveActiveProvider(getProvider());
-  const templateName = process.env.WHATSAPP_TEMPLATE_RSVP_NAME;
+  const resolvedTemplateName = templateName || process.env.WHATSAPP_TEMPLATE_RSVP_NAME;
   const textBody = textFallbackBody || body;
 
-  if (provider === 'meta' && templateName) {
+  if (provider === 'meta' && resolvedTemplateName) {
     const res = await sendWhatsAppRsvpTemplate({
       toPhone,
+      templateName: resolvedTemplateName,
       bodyParams: templateBodyParams,
+      bodyParamNames: templateBodyParamNames,
       buttonPayloads: [yesButtonId, noButtonId],
       tag,
     });

@@ -8,7 +8,6 @@ const {
   buildCustomerReminderMessage,
   buildBusinessReminderMessage,
   buildCustomerReminderRsvpMessage,
-  buildCustomer24hReminderMessage,
   formatDateTr,
 } = require('../services/whatsappReservationMessages');
 const {
@@ -37,6 +36,50 @@ function appointmentStartUtcFromStoredDay(storedDay, timeStr) {
   const mmLocal = mins % 60;
   const utcMs = Date.UTC(y, mo, d, hhLocal, mmLocal, 0, 0) - tzOffsetMin * 60 * 1000;
   return new Date(utcMs);
+}
+
+function buildRsvpReminderTemplateConfig({ kind, businessName, dateKey, time, serviceName }) {
+  const specificName =
+    kind === '24h'
+      ? process.env.WHATSAPP_TEMPLATE_RSVP_24H_NAME
+      : process.env.WHATSAPP_TEMPLATE_RSVP_1H_NAME;
+  const legacyName = process.env.WHATSAPP_TEMPLATE_RSVP_NAME;
+  const dateText = formatDateTr(dateKey);
+
+  if (specificName) {
+    return {
+      templateName: specificName,
+      templateBodyParams: [
+        kind === '24h' ? 'Yarin' : '1 saat icinde',
+        businessName,
+        dateText,
+        time,
+        serviceName,
+      ],
+      templateBodyParamNames: [
+        'reminder_timing',
+        'business_name',
+        'appointment_date',
+        'appointment_time',
+        'service_name',
+      ],
+    };
+  }
+
+  if (legacyName) {
+    return {
+      templateName: legacyName,
+      templateBodyParams: [businessName, dateText, time, serviceName],
+      templateBodyParamNames: [
+        'business_name',
+        'appointment_date',
+        'appointment_time',
+        'service_name',
+      ],
+    };
+  }
+
+  return {};
 }
 
 async function runWhatsAppReminders({ now = new Date() } = {}) {
@@ -131,18 +174,45 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     const customerPhone = await resolveCustomerPhone(customer, customerId);
     const businessPhone = await resolveBusinessPhone(business);
 
-    // Exactly ~24h before (customer-only) — send once.
+    // Exactly ~24h before (customer-only) — ask RSVP once.
     if (in24hWindow && !r.reminders?.customerWhatsApp24hSentAt) {
       anyAttempt = true;
-      const msg = buildCustomer24hReminderMessage({
-        businessName: business?.name || 'İşletme',
+      const rsvpCode = String(r._id).slice(-6).toUpperCase();
+      const buttonIds = buildRsvpButtonIds(r._id);
+      const businessName = business?.name || 'İşletme';
+      const serviceName = service?.name || 'Hizmet';
+      const msg = buildCustomerReminderRsvpMessage({
+        businessName,
         dateKey,
         time: r.time,
-        serviceName: service?.name || 'Hizmet',
+        serviceName,
+        rsvpCode,
+        interactive: true,
+        reminderLabel: 'Yarınki randevu hatırlatması',
       });
-      const res = await sendWhatsApp({
+      const textFallbackBody = buildCustomerReminderRsvpMessage({
+        businessName,
+        dateKey,
+        time: r.time,
+        serviceName,
+        rsvpCode,
+        interactive: false,
+        reminderLabel: 'Yarınki randevu hatırlatması',
+      });
+      const templateConfig = buildRsvpReminderTemplateConfig({
+        kind: '24h',
+        businessName,
+        dateKey,
+        time: r.time,
+        serviceName,
+      });
+      const res = await sendWhatsAppRsvpPrompt({
         toPhone: customerPhone,
         body: msg,
+        textFallbackBody,
+        yesButtonId: buttonIds.yes,
+        noButtonId: buttonIds.no,
+        ...templateConfig,
         tag: `reservation:${r._id}:customer:reminder_24h`,
       });
       sendAttempts.push({
@@ -188,18 +258,20 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         rsvpCode,
         interactive: false,
       });
+      const templateConfig = buildRsvpReminderTemplateConfig({
+        kind: '1h',
+        businessName,
+        dateKey,
+        time: r.time,
+        serviceName,
+      });
       const res = await sendWhatsAppRsvpPrompt({
         toPhone: customerPhone,
         body: msg,
         textFallbackBody,
         yesButtonId: buttonIds.yes,
         noButtonId: buttonIds.no,
-        templateBodyParams: [
-          businessName,
-          formatDateTr(dateKey),
-          r.time,
-          serviceName,
-        ],
+        ...templateConfig,
         tag: `reservation:${r._id}:customer:reminder`,
       });
       sendAttempts.push({

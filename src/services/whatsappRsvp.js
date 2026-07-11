@@ -1,9 +1,10 @@
 const Reservation = require('../models/Reservation');
 const User = require('../models/User');
-const { sendWhatsApp } = require('./whatsapp');
+const { sendWhatsApp, sendWhatsAppTemplate, getProvider } = require('./whatsapp');
 const { resolveBusinessPhone } = require('./whatsappReservationNotify');
 const {
   toYmd,
+  formatDateTr,
   buildBusinessCustomerRsvpMessage,
 } = require('./whatsappReservationMessages');
 const { normalizeE164Tr } = require('./whatsapp');
@@ -104,10 +105,37 @@ async function notifyBusinessRsvp(r, user, rsvp) {
   if (!businessPhone) return;
 
   const customerName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '';
+  const dateKey = toYmd(r.date);
+  const statusText = rsvp === 'confirmed' ? 'Gelecek' : 'Iptal etti';
+  const templateName = process.env.WHATSAPP_TEMPLATE_RSVP_BUSINESS_NAME;
+
+  if (getProvider() === 'meta' && templateName) {
+    await sendWhatsAppTemplate({
+      toPhone: businessPhone,
+      templateName,
+      bodyParams: [
+        customerName || 'Musteri',
+        statusText,
+        formatDateTr(dateKey),
+        r.time,
+        r.serviceId?.name || 'Hizmet',
+      ],
+      bodyParamNames: [
+        'customer_name',
+        'rsvp_status',
+        'appointment_date',
+        'appointment_time',
+        'service_name',
+      ],
+      tag: `reservation:${r._id}:business:rsvp`,
+    });
+    return;
+  }
+
   const msg = buildBusinessCustomerRsvpMessage({
     businessName: business?.name || '',
     customerName,
-    dateKey: toYmd(r.date),
+    dateKey,
     time: r.time,
     serviceName: r.serviceId?.name || 'Hizmet',
     rsvp,

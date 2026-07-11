@@ -44,10 +44,18 @@ function buildCustomerReminderMessage({ businessName, dateKey, time, serviceName
   return lines.join('\n');
 }
 
-function buildCustomerReminderRsvpMessage({ businessName, dateKey, time, serviceName, rsvpCode, interactive }) {
+function buildCustomerReminderRsvpMessage({
+  businessName,
+  dateKey,
+  time,
+  serviceName,
+  rsvpCode,
+  interactive,
+  reminderLabel,
+}) {
   const code = waEscape(rsvpCode || '');
   const lines = [
-    `${waBold('Randevu hatırlatması')} 🔔`,
+    `${waBold(reminderLabel || 'Randevu hatırlatması')} 🔔`,
     '',
     waLine('İşletme', businessName || 'İşletme'),
     waLine('Tarih', formatDateTr(dateKey)),

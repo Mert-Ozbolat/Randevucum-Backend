@@ -44,14 +44,49 @@ function reservationStatusLabelTr(status) {
   return status || '';
 }
 
-function businessReservationsPanelUrl() {
+function businessReservationsPanelUrl(businessId) {
   const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
   if (!base || /localhost|127\.0\.0\.1/i.test(base)) return '';
+  const id = businessId ? String(businessId).trim() : '';
+  if (id && /^[a-f0-9]{24}$/i.test(id)) {
+    return `${base}/dashboard/business/reservations/${id}`;
+  }
   return `${base}/dashboard/business/reservations`;
+}
+
+/** Meta URL butonu için dinamik yol eki (business MongoDB id) */
+function businessReservationsPanelPathSuffix(businessId) {
+  const id = businessId ? String(businessId).trim() : '';
+  if (!id || !/^[a-f0-9]{24}$/i.test(id)) return '';
+  return id;
+}
+
+function formatBusinessAddressLine(business) {
+  const a = business?.address || {};
+  const parts = [a.street, a.district, a.city, a.postalCode].map((p) => String(p || '').trim()).filter(Boolean);
+  return parts.join(', ');
+}
+
+/** Meta Location header — işletme harita pini (lat/lng zorunlu) */
+function buildBusinessLocationHeader(business) {
+  const lat = business?.location?.lat;
+  const lng = business?.location?.lng;
+  if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
+    return null;
+  }
+  const address = formatBusinessAddressLine(business) || String(business?.name || 'Isletme');
+  return {
+    latitude: lat,
+    longitude: lng,
+    name: String(business?.name || 'Isletme'),
+    address,
+  };
 }
 
 async function sendBusinessBookingWhatsApp({
   reservationId,
+  businessId,
+  business,
   businessPhone,
   customerName,
   customerPhone,
@@ -63,11 +98,21 @@ async function sendBusinessBookingWhatsApp({
 }) {
   const tag = `reservation:${reservationId}:business:booking`;
   const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_BUSINESS_NAME;
+  const panelPathSuffix = businessReservationsPanelPathSuffix(businessId);
+  const headerLocation = buildBusinessLocationHeader(business);
 
   if (getProvider() === 'meta' && templateName) {
+    if (!headerLocation) {
+      waLog('⚠️', 'Isletme konumu yok — template Location header atlanacak', {
+        tag,
+        businessId: String(businessId || ''),
+        hint: 'Isletme panelinde haritadan konum (pin) kaydedin.',
+      });
+    }
     return sendWhatsAppTemplate({
       toPhone: businessPhone,
       templateName,
+      headerLocation: headerLocation || undefined,
       bodyParams: [
         formatDateTr(dateKey),
         time,
@@ -75,6 +120,22 @@ async function sendBusinessBookingWhatsApp({
         customerName || '—',
         customerPhone || '—',
       ],
+      bodyParamNames: [
+        'appointment_date',
+        'appointment_time',
+        'service_name',
+        'customer_name',
+        'customer_phone',
+      ],
+      urlButtons: panelPathSuffix
+        ? [
+            {
+              index: 0,
+              text: panelPathSuffix,
+              parameterName: 'business_id',
+            },
+          ]
+        : undefined,
       tag,
     });
   }
@@ -102,6 +163,7 @@ async function sendBusinessBookingWhatsApp({
 async function sendCustomerBookingWhatsApp({
   reservationId,
   businessName,
+  business,
   customerPhone,
   dateKey,
   time,
@@ -109,17 +171,20 @@ async function sendCustomerBookingWhatsApp({
 }) {
   const tag = `reservation:${reservationId}:customer:booking`;
   const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_CUSTOMER_NAME;
+  const headerLocation = buildBusinessLocationHeader(business);
 
   if (getProvider() === 'meta' && templateName) {
     return sendWhatsAppTemplate({
       toPhone: customerPhone,
       templateName,
+      headerLocation: headerLocation || undefined,
       bodyParams: [
         businessName || 'İşletme',
         formatDateTr(dateKey),
         time,
         serviceName || 'Hizmet',
       ],
+      bodyParamNames: ['business_name', 'appointment_date', 'appointment_time', 'service_name'],
       tag,
     });
   }
@@ -153,7 +218,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   });
 
   const r = await Reservation.findById(reservationId)
-    .populate('businessId', 'name phone ownerId')
+    .populate('businessId', 'name phone ownerId address location')
     .populate('serviceId', 'name')
     .populate('staffId', 'name title')
     .populate('customerId', 'firstName lastName phone')
@@ -170,7 +235,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const service = r.serviceId;
   const staff = r.staffId;
   const dateKey = toYmd(r.date);
-  const panelUrl = businessReservationsPanelUrl();
+  const panelUrl = businessReservationsPanelUrl(businessId);
 
   const customerPhone =
     (customerPhoneHint && String(customerPhoneHint).trim()) ||
@@ -198,6 +263,8 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   } else if (businessPhone) {
     const res = await sendBusinessBookingWhatsApp({
       reservationId: r._id,
+      businessId,
+      business,
       businessPhone,
       customerName,
       customerPhone: customerPhone || '',
@@ -233,6 +300,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     const res = await sendCustomerBookingWhatsApp({
       reservationId: r._id,
       businessName: business?.name || 'İşletme',
+      business,
       customerPhone,
       dateKey,
       time: r.time,
