@@ -1,7 +1,7 @@
 const Business = require('../models/Business');
 const User = require('../models/User');
 const Reservation = require('../models/Reservation');
-const { sendWhatsApp, isEnabled: isWhatsAppEnabled } = require('./whatsapp');
+const { sendWhatsApp, sendWhatsAppTemplate, isEnabled: isWhatsAppEnabled, getProvider } = require('./whatsapp');
 const { RESERVATION_STATUS } = require('../config/constants');
 const { getActivePlanForBusiness } = require('../utils/subscriptionLimits');
 const {
@@ -11,6 +11,7 @@ const {
   buildCustomerBookingMessage,
   buildCustomerApprovedMessage,
   buildBusinessBookingMessage,
+  formatDateTr,
 } = require('./whatsappReservationMessages');
 const { waLog } = require('../utils/whatsappLog');
 
@@ -45,7 +46,49 @@ function reservationStatusLabelTr(status) {
 
 function businessReservationsPanelUrl() {
   const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
-  return base ? `${base}/dashboard/business/reservations` : '';
+  if (!base || /localhost|127\.0\.0\.1/i.test(base)) return '';
+  return `${base}/dashboard/business/reservations`;
+}
+
+async function sendBusinessBookingWhatsApp({
+  reservationId,
+  businessPhone,
+  customerName,
+  customerPhone,
+  dateKey,
+  time,
+  serviceName,
+  staffName,
+  panelUrl,
+}) {
+  const tag = `reservation:${reservationId}:business:booking`;
+  const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_BUSINESS_NAME;
+
+  if (getProvider() === 'meta' && templateName) {
+    return sendWhatsAppTemplate({
+      toPhone: businessPhone,
+      templateName,
+      bodyParams: [
+        formatDateTr(dateKey),
+        time,
+        serviceName || 'Hizmet',
+        customerName || '—',
+        customerPhone || '—',
+      ],
+      tag,
+    });
+  }
+
+  const msg = buildBusinessBookingMessage({
+    customerName,
+    customerPhone: customerPhone || '',
+    dateKey,
+    time,
+    serviceName,
+    staffName,
+    panelUrl,
+  });
+  return sendWhatsApp({ toPhone: businessPhone, body: msg, tag });
 }
 
 /**
@@ -103,7 +146,9 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
       hint: 'İşletme formunda veya işletme sahibi profilinde telefon tanımlayın',
     });
   } else if (businessPhone) {
-    const msg = buildBusinessBookingMessage({
+    const res = await sendBusinessBookingWhatsApp({
+      reservationId: r._id,
+      businessPhone,
       customerName,
       customerPhone: customerPhone || '',
       dateKey,
@@ -111,11 +156,6 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
       serviceName: service?.name || 'Hizmet',
       staffName,
       panelUrl,
-    });
-    const res = await sendWhatsApp({
-      toPhone: businessPhone,
-      body: msg,
-      tag: `reservation:${r._id}:business:booking`,
     });
     results.business = res;
     if (res.ok) {

@@ -158,11 +158,15 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
       interactive,
     };
   } else {
+    const textBody = formatBodyForMeta(body);
+    if (!textBody.trim()) {
+      return { ok: false, reason: 'meta_empty_body', message: 'Message body is empty after formatting.' };
+    }
     payload = {
       messaging_product: 'whatsapp',
       to,
       type: 'text',
-      text: { preview_url: false, body },
+      text: { preview_url: false, body: textBody },
     };
   }
 
@@ -177,16 +181,133 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const err = json?.error || {};
     const msg =
-      json?.error?.message ||
+      err.message ||
       json?.message ||
       `Meta WhatsApp API error (HTTP ${res.status})`;
-    console.error('[whatsapp][meta] send failed', { tag, status: res.status, message: msg });
-    return { ok: false, reason: 'meta_send_failed', message: msg, status: res.status };
+    const hint = metaErrorHint(err, to);
+    console.error('[whatsapp][meta] send failed', {
+      tag,
+      status: res.status,
+      message: msg,
+      code: err.code,
+      error_subcode: err.error_subcode,
+      error_data: err.error_data,
+      fbtrace_id: err.fbtrace_id,
+      to,
+      hint,
+    });
+    return {
+      ok: false,
+      reason: 'meta_send_failed',
+      message: msg,
+      status: res.status,
+      code: err.code,
+      errorSubcode: err.error_subcode,
+      hint,
+    };
   }
 
   const messageId = json?.messages?.[0]?.id;
   return { ok: true, provider: 'meta', messageId };
+}
+
+/** Meta düz metin: WhatsApp markdown sadeleştir, max 4096 karakter */
+function formatBodyForMeta(body) {
+  return String(body || '')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/·/g, '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+    .slice(0, 4096);
+}
+
+function metaErrorHint(err, to) {
+  const code = Number(err?.code);
+  const subcode = Number(err?.error_subcode);
+  if (code === 131030 || subcode === 131030) {
+    return `Alıcı (${to}) Meta test listesinde değil. Developer Console → WhatsApp → API Setup → "To" alanına numarayı ekleyin veya uygulamayı Live moda alın.`;
+  }
+  if (code === 131047 || subcode === 131047) {
+    return '24 saat kuralı: serbest metin gönderilemez. Onaylı WhatsApp şablonu (template) gerekir.';
+  }
+  if (code === 133010 || subcode === 133010) {
+    return `Alıcı numarası (${to}) WhatsApp'ta kayıtlı değil veya geçersiz.`;
+  }
+  if (code === 100) {
+    return `Alıcı (${to}) büyük ihtimalle Meta WhatsApp Business hattınızla aynı numara — API kendi numarasına mesaj gönderemez. İşletme profilinde farklı bir bildirim telefonu kullanın veya WHATSAPP_BUSINESS_NOTIFICATION_PHONE ayarlayın.`;
+  }
+  return err?.error_user_msg || null;
+}
+
+let metaWabaPhoneCache = { value: null, expires: 0 };
+
+function phoneDigitsLast10(phone) {
+  return String(phone || '').replace(/\D/g, '').slice(-10);
+}
+
+function phonesMatch(a, b) {
+  const da = phoneDigitsLast10(a);
+  const db = phoneDigitsLast10(b);
+  return Boolean(da && db && da.length >= 10 && da === db);
+}
+
+/** Meta'ya bağlı WhatsApp Business hattının telefon numarası */
+async function resolveMetaWabaPhoneE164() {
+  const fromEnv =
+    process.env.WHATSAPP_BUSINESS_PHONE_E164 || process.env.WHATSAPP_BUSINESS_PHONE;
+  if (fromEnv) return normalizeE164Tr(fromEnv);
+
+  if (metaWabaPhoneCache.expires > Date.now()) return metaWabaPhoneCache.value;
+
+  const token = process.env.WHATSAPP_CLOUD_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const version = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
+  if (!token || !phoneNumberId) return null;
+
+  try {
+    const url = `https://graph.facebook.com/${version}/${phoneNumberId}?fields=display_phone_number`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json().catch(() => ({}));
+    const normalized = json?.display_phone_number
+      ? normalizeE164Tr(json.display_phone_number)
+      : null;
+    metaWabaPhoneCache = { value: normalized, expires: Date.now() + 60 * 60 * 1000 };
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Meta'da alıcı = kendi WA Business hattınızsa gönderim yapılamaz (#100).
+ * WHATSAPP_BUSINESS_NOTIFICATION_PHONE varsa alternatif numaraya yönlendir.
+ */
+async function resolveMetaRecipientE164(toE164) {
+  const wabaPhone = await resolveMetaWabaPhoneE164();
+  if (!wabaPhone || !phonesMatch(toE164, wabaPhone)) {
+    return { to: toE164, skipped: false };
+  }
+
+  const alt = normalizeE164Tr(process.env.WHATSAPP_BUSINESS_NOTIFICATION_PHONE);
+  if (alt && !phonesMatch(alt, wabaPhone)) {
+    return {
+      to: alt,
+      skipped: false,
+      redirectedFrom: toE164,
+      wabaPhone,
+    };
+  }
+
+  return {
+    to: toE164,
+    skipped: true,
+    reason: 'recipient_is_waba_phone',
+    wabaPhone,
+    hint:
+      'İşletme telefonu Meta WhatsApp hattınızla aynı. Bildirimler için işletme profilinde farklı bir telefon girin veya Cloud Run\'da WHATSAPP_BUSINESS_NOTIFICATION_PHONE tanımlayın.',
+  };
 }
 
 function resolveActiveProvider(requested) {
@@ -247,8 +368,35 @@ async function sendWhatsAppInteractive({ toPhone, body, buttons, tag }) {
 }
 
 /**
+ * Meta Cloud API ile onaylı şablon mesajı.
+ */
+async function sendWhatsAppTemplate({ toPhone, templateName, languageCode, bodyParams, tag }) {
+  const to = normalizeE164Tr(toPhone);
+  if (!to) return { ok: false, skipped: true, reason: 'invalid_phone' };
+  if (!isEnabled()) return { ok: true, dryRun: true, reason: 'whatsapp_disabled' };
+  if (!templateName) return { ok: false, reason: 'template_not_configured' };
+
+  const lang = languageCode || process.env.WHATSAPP_TEMPLATE_LANG || 'tr';
+  const components = [];
+  if (bodyParams?.length) {
+    components.push({
+      type: 'body',
+      parameters: bodyParams.map((text) => ({ type: 'text', text: String(text).slice(0, 1024) })),
+    });
+  }
+
+  const template = {
+    name: templateName,
+    language: { code: lang },
+    ...(components.length ? { components } : {}),
+  };
+
+  waLog('📤', 'Meta template gönderim', { tag, to, template: templateName });
+  return sendViaMetaCloud({ toE164: to, tag, template });
+}
+
+/**
  * Onaylı Meta şablonu ile RSVP hatırlatması (24 saat kuralı dışı mesajlar için).
- * WHATSAPP_TEMPLATE_RSVP_NAME ve body parametreleri gerekir.
  */
 async function sendWhatsAppRsvpTemplate({
   toPhone,
@@ -397,9 +545,42 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   }
 
   if (provider === 'meta') {
-    const res = await sendViaMetaCloud({ toE164: to, body, tag });
+    const recipient = await resolveMetaRecipientE164(to);
+    if (recipient.skipped) {
+      waLog('⏭️', 'Meta: WhatsApp Business hattına mesaj gönderilemez', {
+        tag,
+        to,
+        wabaPhone: recipient.wabaPhone,
+        hint: recipient.hint,
+      });
+      return {
+        ok: false,
+        skipped: true,
+        reason: recipient.reason,
+        hint: recipient.hint,
+      };
+    }
+    if (recipient.redirectedFrom) {
+      waLog('↪️', 'İşletme bildirimi alternatif numaraya yönlendirildi (WA hattı = alıcı)', {
+        tag,
+        from: recipient.redirectedFrom,
+        to: recipient.to,
+        wabaPhone: recipient.wabaPhone,
+      });
+    }
+    const res = await sendViaMetaCloud({ toE164: recipient.to, body, tag });
     if (res.ok) waLog('✅', 'Meta mesaj gönderildi', { tag, messageId: res.messageId });
-    else if (!res.skipped) waLog('❌', 'Meta gönderim hatası', { tag, reason: res.reason, message: res.message });
+    else if (!res.skipped) {
+      waLog('❌', 'Meta gönderim hatası', {
+        tag,
+        to,
+        reason: res.reason,
+        message: res.message,
+        code: res.code,
+        errorSubcode: res.errorSubcode,
+        hint: res.hint,
+      });
+    }
     return res;
   }
 
@@ -414,9 +595,12 @@ async function sendWhatsApp({ toPhone, body, tag }) {
 module.exports = {
   sendWhatsApp,
   sendWhatsAppInteractive,
+  sendWhatsAppTemplate,
   sendWhatsAppRsvpTemplate,
   sendWhatsAppRsvpPrompt,
   normalizeE164Tr,
+  phonesMatch,
+  resolveMetaWabaPhoneE164,
   isEnabled,
   isUltraMsgConfigured,
   isMetaConfigured,
