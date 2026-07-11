@@ -79,6 +79,14 @@ async function sendBusinessBookingWhatsApp({
     });
   }
 
+  if (getProvider() === 'meta' && !templateName) {
+    waLog('⚠️', 'Meta session mesajı (işletme randevu) — template yok', {
+      tag,
+      to: businessPhone,
+      hint: 'WHATSAPP_TEMPLATE_BOOKING_BUSINESS_NAME tanımlayın; aksi halde 24 saat kuralı dışında teslim edilmeyebilir.',
+    });
+  }
+
   const msg = buildBusinessBookingMessage({
     customerName,
     customerPhone: customerPhone || '',
@@ -89,6 +97,48 @@ async function sendBusinessBookingWhatsApp({
     panelUrl,
   });
   return sendWhatsApp({ toPhone: businessPhone, body: msg, tag });
+}
+
+async function sendCustomerBookingWhatsApp({
+  reservationId,
+  businessName,
+  customerPhone,
+  dateKey,
+  time,
+  serviceName,
+}) {
+  const tag = `reservation:${reservationId}:customer:booking`;
+  const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_CUSTOMER_NAME;
+
+  if (getProvider() === 'meta' && templateName) {
+    return sendWhatsAppTemplate({
+      toPhone: customerPhone,
+      templateName,
+      bodyParams: [
+        businessName || 'İşletme',
+        formatDateTr(dateKey),
+        time,
+        serviceName || 'Hizmet',
+      ],
+      tag,
+    });
+  }
+
+  if (getProvider() === 'meta' && !templateName) {
+    waLog('⚠️', 'Meta session mesajı (müşteri randevu) — template yok', {
+      tag,
+      to: customerPhone,
+      hint: 'WHATSAPP_TEMPLATE_BOOKING_CUSTOMER_NAME tanımlayın; aksi halde 24 saat kuralı dışında teslim edilmeyebilir.',
+    });
+  }
+
+  const msg = buildCustomerApprovedMessage({
+    businessName,
+    dateKey,
+    time,
+    serviceName,
+  });
+  return sendWhatsApp({ toPhone: customerPhone, body: msg, tag });
 }
 
 /**
@@ -180,16 +230,13 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   } else if (!customerPhone) {
     results.customer = { ok: false, skipped: true, reason: 'no_customer_phone' };
   } else {
-    const msg = buildCustomerApprovedMessage({
+    const res = await sendCustomerBookingWhatsApp({
+      reservationId: r._id,
       businessName: business?.name || 'İşletme',
+      customerPhone,
       dateKey,
       time: r.time,
       serviceName: service?.name || 'Hizmet',
-    });
-    const res = await sendWhatsApp({
-      toPhone: customerPhone,
-      body: msg,
-      tag: `reservation:${r._id}:customer:booking`,
     });
     results.customer = res;
     if (res.ok) {

@@ -1,6 +1,7 @@
 const { asyncHandler } = require('../utils/errors');
 const { success, error } = require('../utils/response');
 const { processIncomingRsvp } = require('../services/whatsappRsvp');
+const { processMetaDeliveryWebhook } = require('../services/whatsappMetaDelivery');
 const { waLog } = require('../utils/whatsappLog');
 const { timingSafeEqualString } = require('../middleware/jobsAuth');
 
@@ -103,6 +104,8 @@ exports.metaIncoming = asyncHandler(async (req, res) => {
     return success(res, 200, { ok: true, ignored: true, object: body.object }, 'OK');
   }
 
+  const statusCount = processMetaDeliveryWebhook(body);
+
   const messages = extractMetaIncomingMessages(body);
   const results = [];
 
@@ -119,5 +122,5 @@ exports.metaIncoming = asyncHandler(async (req, res) => {
   }
 
   // Meta always expects 200 quickly to avoid retries.
-  return success(res, 200, { ok: true, processed: results.length, results }, 'OK');
+  return success(res, 200, { ok: true, statusCount, processed: results.length, results }, 'OK');
 });

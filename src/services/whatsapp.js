@@ -143,7 +143,9 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
   const to = toE164.replace(/^\+/, '');
 
   let payload;
+  let messageType = 'session_text';
   if (template) {
+    messageType = 'template';
     payload = {
       messaging_product: 'whatsapp',
       to,
@@ -151,6 +153,7 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
       template,
     };
   } else if (interactive) {
+    messageType = 'interactive';
     payload = {
       messaging_product: 'whatsapp',
       to,
@@ -169,6 +172,17 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
       text: { preview_url: false, body: textBody },
     };
   }
+
+  waLog('📡', 'Meta API isteği', {
+    tag,
+    to: `+${to}`,
+    messageType,
+    templateName: template?.name || null,
+    bodyPreview:
+      messageType === 'session_text'
+        ? String(formatBodyForMeta(body)).slice(0, 120)
+        : undefined,
+  });
 
   const res = await fetch(url, {
     method: 'POST',
@@ -210,7 +224,15 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
   }
 
   const messageId = json?.messages?.[0]?.id;
-  return { ok: true, provider: 'meta', messageId };
+  const contactWaId = json?.contacts?.[0]?.wa_id;
+  return {
+    ok: true,
+    provider: 'meta',
+    messageId,
+    messageType,
+    to: `+${to}`,
+    contactWaId: contactWaId || null,
+  };
 }
 
 /** Meta düz metin: WhatsApp markdown sadeleştir, max 4096 karakter */
@@ -569,8 +591,19 @@ async function sendWhatsApp({ toPhone, body, tag }) {
       });
     }
     const res = await sendViaMetaCloud({ toE164: recipient.to, body, tag });
-    if (res.ok) waLog('✅', 'Meta mesaj gönderildi', { tag, messageId: res.messageId });
-    else if (!res.skipped) {
+    if (res.ok) {
+      waLog('✅', 'Meta mesaj kabul edildi (API — henüz teslimat garantisi yok)', {
+        tag,
+        messageId: res.messageId,
+        messageType: res.messageType,
+        to: res.to || recipient.to,
+        contactWaId: res.contactWaId,
+        hint:
+          res.messageType === 'session_text'
+            ? 'Session (serbest metin): alıcı son 24 saatte size yazmadıysa Meta teslim ETMEZ. WHATSAPP_TEMPLATE_BOOKING_* şablonlarını ayarlayın. Teslimat için webhook loglarında sent/delivered/failed izleyin.'
+            : 'Teslimat durumu webhook ile loglanır (📨 sent → 📬 delivered veya 🚫 failed).',
+      });
+    } else if (!res.skipped) {
       waLog('❌', 'Meta gönderim hatası', {
         tag,
         to,
