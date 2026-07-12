@@ -260,6 +260,16 @@ function metaErrorHint(err, to) {
   if (code === 100) {
     return `Alıcı (${to}) büyük ihtimalle Meta WhatsApp Business hattınızla aynı numara — API kendi numarasına mesaj gönderemez. İşletme profilinde farklı bir bildirim telefonu kullanın veya WHATSAPP_BUSINESS_NOTIFICATION_PHONE ayarlayın.`;
   }
+  if (code === 132001) {
+    return 'Şablon adı veya dil (tr) Meta panelinde onaylı şablonla eşleşmiyor. WhatsApp Manager → Message templates kontrol edin.';
+  }
+  if (code === 132018) {
+    const details = String(err?.error_data?.details || err?.message || '').toLowerCase();
+    if (details.includes('header')) {
+      return 'Şablonunuzda Location header yok ama API header gönderiyor. WHATSAPP_TEMPLATE_BOOKING_USE_LOCATION_HEADER=false bırakın veya şablona Location header ekleyip true yapın.';
+    }
+    return 'Şablon parametreleri Meta şablonuyla uyuşmuyor (header, body veya buton). Paneldeki değişken/buton yapısı ile kod aynı olmalı.';
+  }
   return err?.error_user_msg || null;
 }
 

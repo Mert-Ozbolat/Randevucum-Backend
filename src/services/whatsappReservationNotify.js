@@ -67,6 +67,15 @@ function formatBusinessAddressLine(business) {
   return parts.join(', ');
 }
 
+/** Meta Location header — yalnızca şablonda Location header varsa ve env açıksa */
+function resolveBookingLocationHeader(business) {
+  const enabled =
+    String(process.env.WHATSAPP_TEMPLATE_BOOKING_USE_LOCATION_HEADER || '').toLowerCase() ===
+    'true';
+  if (!enabled) return null;
+  return buildBusinessLocationHeader(business);
+}
+
 /** Meta Location header — işletme harita pini (lat/lng zorunlu) */
 function buildBusinessLocationHeader(business) {
   const lat = business?.location?.lat;
@@ -99,10 +108,14 @@ async function sendBusinessBookingWhatsApp({
   const tag = `reservation:${reservationId}:business:booking`;
   const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_BUSINESS_NAME;
   const panelPathSuffix = businessReservationsPanelPathSuffix(businessId);
-  const headerLocation = buildBusinessLocationHeader(business);
+  const headerLocation = resolveBookingLocationHeader(business);
 
   if (getProvider() === 'meta' && templateName) {
-    if (!headerLocation) {
+    if (
+      String(process.env.WHATSAPP_TEMPLATE_BOOKING_USE_LOCATION_HEADER || '').toLowerCase() ===
+        'true' &&
+      !headerLocation
+    ) {
       waLog('⚠️', 'Isletme konumu yok — template Location header atlanacak', {
         tag,
         businessId: String(businessId || ''),
@@ -171,7 +184,7 @@ async function sendCustomerBookingWhatsApp({
 }) {
   const tag = `reservation:${reservationId}:customer:booking`;
   const templateName = process.env.WHATSAPP_TEMPLATE_BOOKING_CUSTOMER_NAME;
-  const headerLocation = buildBusinessLocationHeader(business);
+  const headerLocation = resolveBookingLocationHeader(business);
 
   if (getProvider() === 'meta' && templateName) {
     return sendWhatsAppTemplate({
