@@ -13,6 +13,8 @@ const { ROLES } = require('../config/constants');
 const { ATTENDANCE_OUTCOME } = require('../config/constants');
 const { sendReservationBookingWhatsApp } = require('../services/whatsappReservationNotify');
 const { sendNoShowWarningWhatsApp } = require('../services/attendanceNotify');
+const { findOrCreateQuickBookingUser } = require('../utils/quickBookingUser');
+const jwt = require('jsonwebtoken');
 const {
   isReservationPastEnd,
   updateCustomerAttendanceStats,
@@ -74,31 +76,63 @@ async function getEligibleStaffCount(businessId, serviceDoc, reservationDate = n
   return 0;
 }
 
+function signQuickBookingToken(userId) {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    algorithm: 'HS256',
+  });
+}
+
 /**
  * POST /reservations - Create reservation (Customer or authenticated user)
  * Body: businessId, serviceId, staffId?, date, time, notes?
  * Subscription must be active for the business.
  */
 exports.createReservation = asyncHandler(async (req, res) => {
-  const { businessId, serviceId, staffId, date, time, notes, customerPhone } = req.body;
-  const customerId = req.user._id;
+  const { businessId, serviceId, staffId, date, time, notes, customerPhone, guestName } = req.body;
 
-  // First reservation: capture phone if user profile has none yet.
-  const userHasPhone = Boolean(req.user.phone && String(req.user.phone).trim());
-  if (!userHasPhone && !customerPhone) {
-    return error(res, 400, 'Telefon numarası gerekli.');
-  }
+  let customerId;
+  let quickBooking = false;
+  let quickBookingUser = null;
 
-  if (!userHasPhone && customerPhone) {
-    const phone = String(customerPhone).trim();
-    const e164 = normalizePhoneForDatabase(phone);
-    if (e164) {
-      await User.updateOne({ _id: customerId }, { $set: { phone: e164 } });
-      // keep req.user in sync for this request's downstream usage
-      req.user.phone = e164;
-    } else {
+  if (req.user) {
+    customerId = req.user._id;
+
+    const userHasPhone = Boolean(req.user.phone && String(req.user.phone).trim());
+    if (!userHasPhone && !customerPhone) {
+      return error(res, 400, 'Telefon numarası gerekli.');
+    }
+
+    if (!userHasPhone && customerPhone) {
+      const phone = String(customerPhone).trim();
+      const e164 = normalizePhoneForDatabase(phone);
+      if (e164) {
+        await User.updateOne({ _id: customerId }, { $set: { phone: e164 } });
+        req.user.phone = e164;
+      } else {
+        return error(res, 400, 'Telefon numarası geçersiz.');
+      }
+    }
+  } else {
+    if (!guestName || !String(guestName).trim()) {
+      return error(res, 400, 'Ad soyad gerekli.');
+    }
+    if (!customerPhone || !String(customerPhone).trim()) {
+      return error(res, 400, 'WhatsApp telefon numarası gerekli.');
+    }
+
+    const quickResult = await findOrCreateQuickBookingUser({
+      guestName: String(guestName).trim(),
+      customerPhone: String(customerPhone).trim(),
+    });
+    if (!quickResult.ok) {
       return error(res, 400, 'Telefon numarası geçersiz.');
     }
+
+    quickBooking = true;
+    quickBookingUser = quickResult.user;
+    customerId = quickResult.user._id;
+    req.user = quickResult.user;
   }
 
   const business = await Business.findById(businessId);
@@ -213,7 +247,16 @@ exports.createReservation = asyncHandler(async (req, res) => {
     (err) => waLog('💥', 'Anlık WhatsApp beklenmeyen hata', { message: err?.message || String(err) })
   );
 
-  return success(res, 201, reservation, 'Reservation created successfully.');
+  const payload = { reservation };
+  if (quickBooking && quickBookingUser) {
+    const userObj = quickBookingUser.toObject ? quickBookingUser.toObject() : { ...quickBookingUser };
+    delete userObj.password;
+    payload.quickBooking = true;
+    payload.token = signQuickBookingToken(quickBookingUser._id);
+    payload.user = userObj;
+  }
+
+  return success(res, 201, payload, 'Reservation created successfully.');
 });
 
 /**

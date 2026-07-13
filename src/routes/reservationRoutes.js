@@ -1,6 +1,6 @@
 const express = require('express');
 const reservationController = require('../controllers/reservationController');
-const { protect } = require('../middleware/auth');
+const { protect, optionalAuth } = require('../middleware/auth');
 const { requireActiveSubscription } = require('../middleware/subscription');
 const { requireBusinessOwnership } = require('../middleware/ownership');
 const {
@@ -41,7 +41,7 @@ const setBusinessIdFromBody = (req, res, next) => {
 
 router.post(
   '/',
-  protect,
+  optionalAuth,
   setBusinessIdFromBody,
   requireActiveSubscription,
   createReservationRules(),

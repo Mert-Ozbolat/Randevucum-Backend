@@ -8,6 +8,12 @@ exports.createReservationRules = () => [
   body('date').isISO8601().withMessage('Valid date is required'),
   body('time').matches(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Time must be HH:mm format'),
   body('notes').optional().trim(),
+  body('guestName')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 2, max: 120 })
+    .withMessage('Ad soyad en az 2 karakter olmalı'),
   body('customerPhone')
     .optional()
     .isString()
