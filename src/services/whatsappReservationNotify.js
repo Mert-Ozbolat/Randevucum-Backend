@@ -37,10 +37,27 @@ async function resolveBusinessPhone(business) {
   return owner?.phone && String(owner.phone).trim() ? String(owner.phone).trim() : null;
 }
 
-function resolveStaffPhone(staff) {
+function resolveStaffPhoneFromRecord(staff) {
   const direct = staff?.phone && String(staff.phone).trim();
   if (!direct) return null;
   return normalizeE164Tr(direct) || null;
+}
+
+/** Personel telefonu: Staff.phone → bağlı User.phone */
+async function resolveStaffPhoneAsync(staff) {
+  if (!staff) return null;
+  const fromStaff = resolveStaffPhoneFromRecord(staff);
+  if (fromStaff) return fromStaff;
+
+  const userId = staff?.userId?._id || staff?.userId;
+  if (!userId) return null;
+  const u = await User.findById(userId).select('phone').lean();
+  const userPhone = u?.phone && String(u.phone).trim();
+  return userPhone ? normalizeE164Tr(userPhone) || null : null;
+}
+
+function resolveStaffPhone(staff) {
+  return resolveStaffPhoneFromRecord(staff);
 }
 
 function resolveBusinessNotificationPhone() {
@@ -60,7 +77,7 @@ function buildNotifyTarget(phone, recipient, routedVia, staffName) {
  */
 async function resolveReservationNotifyTargets({ staff, business, customerPhone }) {
   const staffName = staff?.name || staff?.title || '';
-  const staffPhone = resolveStaffPhone(staff);
+  const staffPhone = await resolveStaffPhoneAsync(staff);
   const businessPhone = await resolveBusinessPhone(business);
   const altNotifyPhone = resolveBusinessNotificationPhone();
   const wabaPhone = await resolveMetaWabaPhoneE164();
@@ -115,6 +132,14 @@ async function resolveReservationNotifyTargets({ staff, business, customerPhone 
       );
     }
     if (targets.length > 0) return targets;
+  }
+
+  if (staffAssigned && !staffPhone) {
+    waLog('⚠️', 'Atanan personelin WhatsApp telefonu yok — yalnızca işletme hattına bildirim', {
+      staffName: staffName || '(personel)',
+      staffId: staff?._id ? String(staff._id) : null,
+      hint: 'Dashboard → Personel → ilgili kişiye telefon ekleyin. Personel hesabı varsa giriş yapıp telefonunu da kaydedebilir.',
+    });
   }
 
   if (businessTarget) {
@@ -348,7 +373,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const r = await Reservation.findById(reservationId)
     .populate('businessId', 'name phone ownerId address location')
     .populate('serviceId', 'name')
-    .populate('staffId', 'name title phone')
+    .populate('staffId', 'name title phone userId')
     .populate('customerId', 'firstName lastName phone')
     .lean();
 
@@ -540,6 +565,7 @@ module.exports = {
   isBusinessPro,
   resolveBusinessPhone,
   resolveStaffPhone,
+  resolveStaffPhoneAsync,
   resolveReservationNotifyPhone,
   resolveReservationNotifyTargets,
   resolveCustomerPhone,
