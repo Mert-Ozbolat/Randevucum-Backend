@@ -2,7 +2,7 @@ const express = require('express');
 const reservationController = require('../controllers/reservationController');
 const { protect, optionalAuth } = require('../middleware/auth');
 const { requireActiveSubscription } = require('../middleware/subscription');
-const { requireBusinessOwnership } = require('../middleware/ownership');
+const { requireBusinessOwnership, requireBusinessManageAccess } = require('../middleware/ownership');
 const {
   createReservationRules,
   updateStatusRules,
@@ -12,6 +12,8 @@ const {
   reservationIdParamRules,
   businessIdParamRules,
   customerIdParamRules,
+  searchBusinessCustomersQueryRules,
+  createManualReservationRules,
   validate,
 } = require('../validators/reservationValidator');
 const { ROLES } = require('../config/constants');
@@ -57,6 +59,28 @@ router.get(
   validate,
   requireBusinessOwnership,
   reservationController.getReservationsByBusiness
+);
+
+// İşletme sahibi / yetkili personel: müşteri ara (daha önce randevu almış)
+router.get(
+  '/business/:businessId/customers/search',
+  protect,
+  searchBusinessCustomersQueryRules(),
+  validate,
+  requireBusinessManageAccess,
+  reservationController.searchBusinessCustomers
+);
+
+// İşletme sahibi / yetkili personel: manuel randevu oluştur
+router.post(
+  '/business/:businessId/manual',
+  protect,
+  setBusinessIdFromBody,
+  requireActiveSubscription,
+  createManualReservationRules(),
+  validate,
+  requireBusinessManageAccess,
+  reservationController.createManualReservation
 );
 
 // Staff (linked user): own assigned reservations

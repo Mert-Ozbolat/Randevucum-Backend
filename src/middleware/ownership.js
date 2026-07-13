@@ -1,4 +1,5 @@
 const Business = require('../models/Business');
+const Staff = require('../models/Staff');
 const { error } = require('../utils/response');
 const { ROLES } = require('../config/constants');
 
@@ -47,4 +48,62 @@ const requireBusinessOwnership = async (req, res, next) => {
   }
 };
 
-module.exports = { requireBusinessOwnership };
+async function resolveBusinessManageAccess(req) {
+  const businessId = req.params.businessId || req.params.id || req.body?.businessId;
+  if (!businessId) return null;
+
+  if (req.user.role === ROLES.SUPER_ADMIN) {
+    const business = await Business.findById(businessId);
+    return business ? { business, businessId: business._id, isOwner: true, isStaff: false } : null;
+  }
+
+  if (req.user.role === ROLES.BUSINESS_OWNER) {
+    const business = await Business.findOne({ _id: businessId, ownerId: req.user._id });
+    return business ? { business, businessId: business._id, isOwner: true, isStaff: false } : null;
+  }
+
+  const staffMember = await Staff.findOne({
+    userId: req.user._id,
+    businessId,
+    isActive: true,
+    canViewOwnReservations: true,
+  }).lean();
+
+  if (staffMember) {
+    const business = await Business.findById(businessId);
+    return business
+      ? { business, businessId: business._id, isOwner: false, isStaff: true, staffMember }
+      : null;
+  }
+
+  return null;
+}
+
+/**
+ * İşletme sahibi veya randevu yetkisi olan personel (canViewOwnReservations).
+ */
+const requireBusinessManageAccess = async (req, res, next) => {
+  try {
+    const access = await resolveBusinessManageAccess(req);
+    if (!access) {
+      return error(res, 403, 'Bu işlem için yetkiniz yok.');
+    }
+    req.business = access.business;
+    req.businessId = access.businessId;
+    req.businessManageAccess = access;
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+async function userCanManageBusinessReservations(user, businessId) {
+  return resolveBusinessManageAccess({ user, params: { businessId: String(businessId) }, body: {} });
+}
+
+module.exports = {
+  requireBusinessOwnership,
+  requireBusinessManageAccess,
+  resolveBusinessManageAccess,
+  userCanManageBusinessReservations,
+};

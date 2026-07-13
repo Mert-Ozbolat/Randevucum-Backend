@@ -35,6 +35,7 @@ const {
   eachCalendarDayKeys,
   expandExceptionToDayKeys,
 } = require('../utils/availabilityExceptions');
+const { userCanManageBusinessReservations } = require('../middleware/ownership');
 
 /**
  * Calculate end time from start time and duration
@@ -81,6 +82,142 @@ function signQuickBookingToken(userId) {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     algorithm: 'HS256',
   });
+}
+
+/**
+ * Ortak randevu oluşturma — müşteri kimliği çözüldükten sonra doğrulama + kayıt.
+ */
+async function createReservationCore({
+  businessId,
+  serviceId,
+  staffId,
+  date,
+  time,
+  notes,
+  customerId,
+  customerPhoneHint,
+}) {
+  const business = await Business.findById(businessId);
+  if (!business) return { error: { status: 404, message: 'Business not found.' } };
+  if (business.billingSuspended) {
+    return {
+      error: {
+        status: 403,
+        message:
+          'Bu işletmenin aboneliği askıda. Yeni randevu alınamaz; işletme sahibi aboneliğini yenilemelidir.',
+      },
+    };
+  }
+  if (!business.isActive) {
+    return { error: { status: 403, message: 'Bu işletme henüz randevu almaya açık değil.' } };
+  }
+
+  const service = await Service.findOne({ _id: serviceId, businessId, isActive: true });
+  if (!service) return { error: { status: 404, message: 'Service not found.' } };
+
+  const durationMinutes = service.durationMinutes;
+  const normalizedTime = normalizeTimeStr(time);
+  const endTime = calculateEndTime(normalizedTime, durationMinutes);
+
+  const reservationDate = reservationDayToStoredDate(date);
+  if (!reservationDate) return { error: { status: 400, message: 'Invalid date.' } };
+
+  if (isBusinessClosedOnDate(business, reservationDate)) {
+    return {
+      error: {
+        status: 403,
+        message: getBusinessClosedReason(business, reservationDate) || 'Bu tarihte işletme kapalı.',
+      },
+    };
+  }
+
+  const eligibleStaffCount = await getEligibleStaffCount(businessId, service, reservationDate);
+  if (eligibleStaffCount === 0) {
+    return { error: { status: 403, message: 'Bu tarihte müsait personel yok.' } };
+  }
+  const capacity = getSlotCapacity(business, eligibleStaffCount);
+
+  const nextDay = nextReservationDayStoredDate(reservationDate);
+  const dayReservations = await Reservation.find({
+    businessId,
+    date: { $gte: reservationDate, $lt: nextDay },
+    status: { $in: [RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED] },
+  }).lean();
+
+  const overlapping = findOverlappingReservations(dayReservations, normalizedTime, durationMinutes);
+  if (overlapping.length >= capacity) {
+    return { error: { status: 409, message: 'Bu saat dilimi dolu.' } };
+  }
+
+  let resolvedStaffId = staffId || null;
+  if (resolvedStaffId) {
+    const staffMember = await Staff.findOne({
+      _id: resolvedStaffId,
+      businessId,
+      isActive: true,
+    });
+    if (!staffMember) return { error: { status: 400, message: 'Invalid staff member.' } };
+    if (!isStaffEligibleForService(staffMember, service)) {
+      return { error: { status: 400, message: 'This staff member does not offer this service.' } };
+    }
+    if (isStaffOnLeave(staffMember, reservationDate)) {
+      return {
+        error: {
+          status: 403,
+          message: getStaffLeaveReason(staffMember, reservationDate) || 'Seçilen personel bu tarihte izinli.',
+        },
+      };
+    }
+    const staffCap = getStaffConcurrentLimit(business, staffMember);
+    const staffOverlapping = overlapping.filter(
+      (r) => r.staffId && r.staffId.toString() === resolvedStaffId.toString()
+    );
+    if (staffOverlapping.length >= staffCap) {
+      return { error: { status: 409, message: 'Seçilen personel bu saat diliminde dolu.' } };
+    }
+  }
+
+  const reservationQuota = await getReservationQuota(businessId);
+  if (!reservationQuota.canAccept) {
+    return {
+      error: {
+        status: 403,
+        message: `Bu işletme standart paket aylık randevu limitine ulaştı (${reservationQuota.limit}/ay). PRO pakete geçilerek sınırsız randevu alınabilir.`,
+      },
+    };
+  }
+
+  const reservation = await Reservation.create({
+    businessId,
+    serviceId,
+    staffId: resolvedStaffId,
+    customerId,
+    date: reservationDate,
+    time: normalizedTime,
+    durationMinutes,
+    endTime,
+    status: RESERVATION_STATUS.APPROVED,
+    notes: notes || undefined,
+  });
+
+  await reservation.populate([
+    { path: 'businessId', select: 'name address phone ownerId' },
+    { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
+    { path: 'staffId', select: 'name title' },
+    { path: 'customerId', select: 'firstName lastName email phone attendanceStats' },
+  ]);
+
+  waLog('🔔', 'Randevu oluşturuldu — anlık WhatsApp tetikleniyor', {
+    reservationId: String(reservation._id),
+    businessId: String(businessId),
+  });
+  void sendReservationBookingWhatsApp(reservation._id, {
+    customerPhoneHint: customerPhoneHint || undefined,
+  }).catch((err) =>
+    waLog('💥', 'Anlık WhatsApp beklenmeyen hata', { message: err?.message || String(err) })
+  );
+
+  return { reservation };
 }
 
 /**
@@ -135,119 +272,25 @@ exports.createReservation = asyncHandler(async (req, res) => {
     req.user = quickResult.user;
   }
 
-  const business = await Business.findById(businessId);
-  if (!business) return error(res, 404, 'Business not found.');
-  if (business.billingSuspended) {
-    return error(
-      res,
-      403,
-      'Bu işletmenin aboneliği askıda. Yeni randevu alınamaz; işletme sahibi aboneliğini yenilemelidir.'
-    );
-  }
-  if (!business.isActive) {
-    return error(res, 403, 'Bu işletme henüz randevu almaya açık değil.');
-  }
-  const service = await Service.findOne({ _id: serviceId, businessId, isActive: true });
-  if (!service) return error(res, 404, 'Service not found.');
+  const customerPhoneForWa =
+    req.user?.phone && String(req.user.phone).trim() ? String(req.user.phone).trim() : undefined;
 
-  const durationMinutes = service.durationMinutes;
-  const normalizedTime = normalizeTimeStr(time);
-  const endTime = calculateEndTime(normalizedTime, durationMinutes);
-
-  const reservationDate = reservationDayToStoredDate(date);
-  if (!reservationDate) return error(res, 400, 'Invalid date.');
-
-  if (isBusinessClosedOnDate(business, reservationDate)) {
-    return error(res, 403, getBusinessClosedReason(business, reservationDate) || 'Bu tarihte işletme kapalı.');
-  }
-
-  const eligibleStaffCount = await getEligibleStaffCount(businessId, service, reservationDate);
-  if (eligibleStaffCount === 0) {
-    return error(res, 403, 'Bu tarihte müsait personel yok.');
-  }
-  const capacity = getSlotCapacity(business, eligibleStaffCount);
-
-  const nextDay = nextReservationDayStoredDate(reservationDate);
-  const dayReservations = await Reservation.find({
-    businessId,
-    date: { $gte: reservationDate, $lt: nextDay },
-    status: { $in: [RESERVATION_STATUS.PENDING, RESERVATION_STATUS.APPROVED] },
-  }).lean();
-
-  const overlapping = findOverlappingReservations(dayReservations, normalizedTime, durationMinutes);
-  if (overlapping.length >= capacity) {
-    return error(res, 409, 'Bu saat dilimi dolu.');
-  }
-
-  let resolvedStaffId = staffId || null;
-  if (resolvedStaffId) {
-    const staffMember = await Staff.findOne({
-      _id: resolvedStaffId,
-      businessId,
-      isActive: true,
-    });
-    if (!staffMember) return error(res, 400, 'Invalid staff member.');
-    if (!isStaffEligibleForService(staffMember, service)) {
-      return error(res, 400, 'This staff member does not offer this service.');
-    }
-    if (isStaffOnLeave(staffMember, reservationDate)) {
-      return error(
-        res,
-        403,
-        getStaffLeaveReason(staffMember, reservationDate) || 'Seçilen personel bu tarihte izinli.'
-      );
-    }
-    const staffCap = getStaffConcurrentLimit(business, staffMember);
-    const staffOverlapping = overlapping.filter(
-      (r) => r.staffId && r.staffId.toString() === resolvedStaffId.toString()
-    );
-    if (staffOverlapping.length >= staffCap) {
-      return error(res, 409, 'Seçilen personel bu saat diliminde dolu.');
-    }
-  }
-
-  const reservationQuota = await getReservationQuota(businessId);
-  if (!reservationQuota.canAccept) {
-    return error(
-      res,
-      403,
-      `Bu işletme standart paket aylık randevu limitine ulaştı (${reservationQuota.limit}/ay). PRO pakete geçilerek sınırsız randevu alınabilir.`
-    );
-  }
-
-  const reservation = await Reservation.create({
+  const result = await createReservationCore({
     businessId,
     serviceId,
-    staffId: resolvedStaffId,
+    staffId,
+    date,
+    time,
+    notes,
     customerId,
-    date: reservationDate,
-    time: normalizedTime,
-    durationMinutes,
-    endTime,
-    status: RESERVATION_STATUS.APPROVED,
-    notes: notes || undefined,
+    customerPhoneHint: customerPhoneForWa,
   });
 
-  await reservation.populate([
-    { path: 'businessId', select: 'name address phone ownerId' },
-    { path: 'serviceId', select: 'name durationMinutes price priceMin priceMax currency' },
-    { path: 'staffId', select: 'name title' },
-  ]);
+  if (result.error) {
+    return error(res, result.error.status, result.error.message);
+  }
 
-  const customerPhoneForWa =
-    req.user.phone && String(req.user.phone).trim()
-      ? String(req.user.phone).trim()
-      : undefined;
-  // Anlık WhatsApp (işletme + PRO ise müşteri) — API yanıtını bekletmez
-  waLog('🔔', 'Randevu oluşturuldu — anlık WhatsApp tetikleniyor', {
-    reservationId: String(reservation._id),
-    businessId: String(businessId),
-  });
-  void sendReservationBookingWhatsApp(reservation._id, { customerPhoneHint: customerPhoneForWa }).catch(
-    (err) => waLog('💥', 'Anlık WhatsApp beklenmeyen hata', { message: err?.message || String(err) })
-  );
-
-  const payload = { reservation };
+  const payload = { reservation: result.reservation };
   if (quickBooking && quickBookingUser) {
     const userObj = quickBookingUser.toObject ? quickBookingUser.toObject() : { ...quickBookingUser };
     delete userObj.password;
@@ -477,6 +520,117 @@ exports.getReservationsByBusiness = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /reservations/business/:businessId/customers/search?q=
+ * Daha önce bu işletmeden randevu almış müşterileri ara.
+ */
+exports.searchBusinessCustomers = asyncHandler(async (req, res) => {
+  const { businessId } = req.params;
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) {
+    return success(res, 200, [], 'OK');
+  }
+
+  const customerIds = await Reservation.distinct('customerId', { businessId });
+  if (!customerIds.length) {
+    return success(res, 200, [], 'OK');
+  }
+
+  const phoneDigits = q.replace(/\D/g, '');
+  const parts = q.split(/\s+/).filter(Boolean);
+  const orConditions = [];
+
+  if (phoneDigits.length >= 3) {
+    orConditions.push({ phone: { $regex: phoneDigits.slice(-10) } });
+  }
+
+  if (parts.length === 1) {
+    orConditions.push({ firstName: { $regex: parts[0], $options: 'i' } });
+    orConditions.push({ lastName: { $regex: parts[0], $options: 'i' } });
+  } else if (parts.length >= 2) {
+    orConditions.push({
+      $and: [
+        { firstName: { $regex: parts[0], $options: 'i' } },
+        { lastName: { $regex: parts.slice(1).join(' '), $options: 'i' } },
+      ],
+    });
+  }
+
+  const filter = {
+    _id: { $in: customerIds },
+    role: ROLES.CUSTOMER,
+  };
+  if (orConditions.length) {
+    filter.$or = orConditions;
+  } else {
+    filter.$or = [
+      { firstName: { $regex: q, $options: 'i' } },
+      { lastName: { $regex: q, $options: 'i' } },
+      { email: { $regex: q, $options: 'i' } },
+    ];
+  }
+
+  const users = await User.find(filter)
+    .select('firstName lastName email phone')
+    .sort({ lastName: 1, firstName: 1 })
+    .limit(20)
+    .lean();
+
+  return success(res, 200, users, 'OK');
+});
+
+/**
+ * POST /reservations/business/:businessId/manual
+ * İşletme sahibi veya yetkili personel manuel randevu oluşturur.
+ */
+exports.createManualReservation = asyncHandler(async (req, res) => {
+  const { businessId } = req.params;
+  const { serviceId, staffId, date, time, notes, customerId, guestName, customerPhone } = req.body;
+
+  let resolvedCustomerId;
+  let customerPhoneHint;
+
+  if (customerId) {
+    const hadBooking = await Reservation.exists({ businessId, customerId });
+    if (!hadBooking) {
+      return error(res, 400, 'Bu müşteri bu işletmeden daha önce randevu almamış.');
+    }
+    const user = await User.findById(customerId).select('_id role phone firstName lastName');
+    if (!user || user.role !== ROLES.CUSTOMER) {
+      return error(res, 400, 'Geçersiz müşteri.');
+    }
+    resolvedCustomerId = user._id;
+    customerPhoneHint = user.phone ? String(user.phone).trim() : undefined;
+  } else {
+    const quickResult = await findOrCreateQuickBookingUser({
+      guestName: String(guestName).trim(),
+      customerPhone: String(customerPhone).trim(),
+    });
+    if (!quickResult.ok) {
+      return error(res, 400, 'Telefon numarası geçersiz.');
+    }
+    resolvedCustomerId = quickResult.user._id;
+    customerPhoneHint = quickResult.user.phone ? String(quickResult.user.phone).trim() : undefined;
+  }
+
+  const result = await createReservationCore({
+    businessId,
+    serviceId,
+    staffId,
+    date,
+    time,
+    notes,
+    customerId: resolvedCustomerId,
+    customerPhoneHint,
+  });
+
+  if (result.error) {
+    return error(res, result.error.status, result.error.message);
+  }
+
+  return success(res, 201, { reservation: result.reservation }, 'Manuel randevu oluşturuldu.');
+});
+
+/**
  * GET /reservations/staff/mine — Personelin kendi atandığı randevular (yetki + hesap eşleşmesi gerekir)
  */
 exports.getMyStaffReservations = asyncHandler(async (req, res) => {
@@ -557,9 +711,8 @@ exports.updateReservationStatus = asyncHandler(async (req, res) => {
   const reservation = await Reservation.findById(id);
   if (!reservation) return error(res, 404, 'Reservation not found.');
 
-  const business = await Business.findById(reservation.businessId);
-  if (!business) return error(res, 404, 'Business not found.');
-  if (req.user.role !== ROLES.SUPER_ADMIN && business.ownerId.toString() !== req.user._id.toString()) {
+  const manageAccess = await userCanManageBusinessReservations(req.user, reservation.businessId);
+  if (!manageAccess && req.user.role !== ROLES.SUPER_ADMIN) {
     return error(res, 403, 'You do not own this business.');
   }
 
@@ -592,10 +745,10 @@ exports.cancelReservation = asyncHandler(async (req, res) => {
   if (!reservation) return error(res, 404, 'Reservation not found.');
 
   const isOwner = reservation.customerId.toString() === req.user._id.toString();
-  const business = await Business.findById(reservation.businessId);
-  const isBusinessOwner = business && business.ownerId.toString() === req.user._id.toString();
+  const manageAccess = await userCanManageBusinessReservations(req.user, reservation.businessId);
+  const isBusinessManager = Boolean(manageAccess);
 
-  if (!isOwner && !isBusinessOwner && req.user.role !== ROLES.SUPER_ADMIN) {
+  if (!isOwner && !isBusinessManager && req.user.role !== ROLES.SUPER_ADMIN) {
     return error(res, 403, 'You can only cancel your own reservations.');
   }
 
@@ -603,7 +756,7 @@ exports.cancelReservation = asyncHandler(async (req, res) => {
     return error(res, 400, 'Reservation cannot be canceled.');
   }
 
-  if (isOwner && !isBusinessOwner && req.user.role !== ROLES.SUPER_ADMIN) {
+  if (isOwner && !isBusinessManager && req.user.role !== ROLES.SUPER_ADMIN) {
     if (!canCustomerCancelReservation(reservation)) {
       return error(
         res,
