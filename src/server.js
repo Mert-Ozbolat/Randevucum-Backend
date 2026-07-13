@@ -10,6 +10,7 @@ const connectDB = require("./config/db");
 const app = require("./app");
 const { runWhatsAppReminders } = require("./jobs/whatsappReminders");
 const { runSubscriptionBillingMaintenance } = require("./jobs/subscriptionBilling");
+const { runMetaWhatsAppStartupHealthCheck } = require("./services/whatsappMetaHealth");
 
 // 🔥 Cloud Run PORT FIX
 const PORT = process.env.PORT || 8080;
@@ -17,6 +18,10 @@ const PORT = process.env.PORT || 8080;
 // 🔥 IMPORTANT: 0.0.0.0 bind (Cloud Run için şart)
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
+
+  runMetaWhatsAppStartupHealthCheck().catch((err) => {
+    console.error("[whatsapp] Meta startup health check failed", err?.message || err);
+  });
 
   // Optional in-process scheduler (not recommended for scale-to-zero/serverless),
   // but useful for single-instance deployments. Prefer Cloud Scheduler calling /jobs/whatsapp-reminders.
