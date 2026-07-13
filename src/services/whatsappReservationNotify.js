@@ -29,6 +29,31 @@ async function resolveBusinessPhone(business) {
   return owner?.phone && String(owner.phone).trim() ? String(owner.phone).trim() : null;
 }
 
+function resolveStaffPhone(staff) {
+  const direct = staff?.phone && String(staff.phone).trim();
+  return direct || null;
+}
+
+/**
+ * Randevu bildirimi alıcısı: atanmış personelin telefonu; yoksa işletme telefonu.
+ */
+async function resolveReservationNotifyPhone({ staff, business }) {
+  const staffPhone = resolveStaffPhone(staff);
+  if (staffPhone) {
+    return {
+      phone: staffPhone,
+      recipient: 'staff',
+      staffName: staff?.name || staff?.title || '',
+    };
+  }
+  const businessPhone = await resolveBusinessPhone(business);
+  return {
+    phone: businessPhone,
+    recipient: 'business',
+    staffName: staff?.name || staff?.title || '',
+  };
+}
+
 async function resolveCustomerPhone(customer, customerId) {
   const fromPop = customer?.phone && String(customer.phone).trim();
   if (fromPop) return fromPop;
@@ -221,7 +246,7 @@ async function sendCustomerBookingWhatsApp({
 
 /**
  * Randevu oluşturulunca anlık WhatsApp:
- * - İşletme sahibi: tüm işletmeler (telefon tanımlıysa)
+ * - Atanan personel (telefonu varsa); yoksa işletme telefonu
  * - Müşteri: yalnızca PRO işletmeler
  */
 async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint } = {}) {
@@ -233,7 +258,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const r = await Reservation.findById(reservationId)
     .populate('businessId', 'name phone ownerId address location')
     .populate('serviceId', 'name')
-    .populate('staffId', 'name title')
+    .populate('staffId', 'name title phone')
     .populate('customerId', 'firstName lastName phone')
     .lean();
 
@@ -254,7 +279,8 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     (customerPhoneHint && String(customerPhoneHint).trim()) ||
     (await resolveCustomerPhone(customer, r.customerId?._id || r.customerId));
 
-  const businessPhone = await resolveBusinessPhone(business);
+  const notifyTarget = await resolveReservationNotifyPhone({ staff, business });
+  const notifyPhone = notifyTarget.phone;
   const customerName = customer
     ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
     : '';
@@ -263,22 +289,25 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const results = { customer: null, business: null };
   const isPro = businessId ? await isBusinessPro(businessId) : false;
 
-  // İşletme — anlık (PRO şartı yok)
+  // Personel / işletme — anlık (PRO şartı yok)
   if (r.reminders?.businessWhatsAppBookingSentAt) {
     results.business = { ok: true, skipped: true, reason: 'already_sent' };
-    waLog('⏭️', 'İşletme anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
-  } else if (!businessPhone) {
-    results.business = { ok: false, skipped: true, reason: 'no_business_phone' };
-    waLog('📵', 'İşletme telefonu yok — anlık bildirim atlandı', {
+    waLog('⏭️', 'Personel/işletme anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
+  } else if (!notifyPhone) {
+    results.business = { ok: false, skipped: true, reason: 'no_notify_phone' };
+    waLog('📵', 'Bildirim telefonu yok — anlık bildirim atlandı', {
       reservationId: String(r._id),
-      hint: 'İşletme formunda veya işletme sahibi profilinde telefon tanımlayın',
+      staffAssigned: Boolean(staff?._id || staff),
+      hint: notifyTarget.recipient === 'staff'
+        ? 'Atanan personel kaydına telefon ekleyin'
+        : 'Personel atanmadıysa işletme veya sahip telefonu tanımlayın',
     });
-  } else if (businessPhone) {
+  } else {
     const res = await sendBusinessBookingWhatsApp({
       reservationId: r._id,
       businessId,
       business,
-      businessPhone,
+      businessPhone: notifyPhone,
       customerName,
       customerPhone: customerPhone || '',
       dateKey,
@@ -296,9 +325,11 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     }
   }
 
-  waLog(results.business?.ok ? '✅' : results.business?.skipped ? '⏭️' : '❌', 'İşletme anlık bildirimi özeti', {
+  waLog(results.business?.ok ? '✅' : results.business?.skipped ? '⏭️' : '❌', 'Personel/işletme anlık bildirimi özeti', {
     reservationId: String(r._id),
     isPro,
+    notifyRecipient: notifyTarget.recipient,
+    notifyPhone: notifyPhone ? '***' : null,
     businessResult: results.business,
   });
 
@@ -411,6 +442,8 @@ async function sendReservationApprovedWhatsApp(reservationId) {
 module.exports = {
   isBusinessPro,
   resolveBusinessPhone,
+  resolveStaffPhone,
+  resolveReservationNotifyPhone,
   resolveCustomerPhone,
   sendReservationBookingWhatsApp,
   sendReservationApprovedWhatsApp,

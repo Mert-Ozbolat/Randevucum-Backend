@@ -4,6 +4,7 @@ const { protect, optionalAuth } = require('../middleware/auth');
 const {
   createStaffRules,
   updateStaffRules,
+  updateMyStaffPhoneRules,
   businessIdParamRules,
   validate,
 } = require('../validators/staffValidator');
@@ -11,6 +12,14 @@ const {
 const router = express.Router();
 
 router.get('/me', protect, staffController.getMyStaffProfile);
+
+router.patch(
+  '/me/phone',
+  protect,
+  updateMyStaffPhoneRules(),
+  validate,
+  staffController.updateMyStaffPhone
+);
 
 router.post(
   '/',

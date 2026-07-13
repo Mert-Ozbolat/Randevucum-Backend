@@ -1,7 +1,7 @@
 const Reservation = require('../models/Reservation');
 const User = require('../models/User');
 const { sendWhatsApp, sendWhatsAppTemplate, getProvider } = require('./whatsapp');
-const { resolveBusinessPhone } = require('./whatsappReservationNotify');
+const { resolveReservationNotifyPhone } = require('./whatsappReservationNotify');
 const {
   toYmd,
   formatDateTr,
@@ -72,6 +72,7 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
     })
       .populate('businessId', 'name phone ownerId')
       .populate('serviceId', 'name')
+      .populate('staffId', 'name title phone')
       .lean();
     if (!r) return null;
     const startAt = appointmentStartUtcFromStoredDay(r.date, r.time);
@@ -85,6 +86,7 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
   })
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
+    .populate('staffId', 'name title phone')
     .lean();
 
   const match = candidates
@@ -101,8 +103,12 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
 
 async function notifyBusinessRsvp(r, user, rsvp) {
   const business = r.businessId;
-  const businessPhone = await resolveBusinessPhone(business);
-  if (!businessPhone) return;
+  const notifyTarget = await resolveReservationNotifyPhone({
+    staff: r.staffId,
+    business,
+  });
+  const notifyPhone = notifyTarget.phone;
+  if (!notifyPhone) return;
 
   const customerName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '';
   const dateKey = toYmd(r.date);
@@ -111,7 +117,7 @@ async function notifyBusinessRsvp(r, user, rsvp) {
 
   if (getProvider() === 'meta' && templateName) {
     await sendWhatsAppTemplate({
-      toPhone: businessPhone,
+      toPhone: notifyPhone,
       templateName,
       bodyParams: [
         customerName || 'Musteri',
@@ -142,9 +148,9 @@ async function notifyBusinessRsvp(r, user, rsvp) {
   });
 
   await sendWhatsApp({
-    toPhone: businessPhone,
+    toPhone: notifyPhone,
     body: msg,
-    tag: `reservation:${r._id}:business:rsvp`,
+    tag: `reservation:${r._id}:${notifyTarget.recipient}:rsvp`,
   });
 }
 

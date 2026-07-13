@@ -37,6 +37,15 @@ exports.businessIdParamRules = () => [
   param('businessId').isMongoId().withMessage('Invalid business ID'),
 ];
 
+exports.updateMyStaffPhoneRules = () => [
+  body('phone')
+    .trim()
+    .notEmpty()
+    .withMessage('Telefon numarası gerekli.')
+    .isLength({ min: 10, max: 32 })
+    .withMessage('Telefon numarası geçersiz.'),
+];
+
 exports.validate = (req, res, next) => {
   const errors = validationResult(req);
   if (errors.isEmpty()) return next();

@@ -149,6 +149,36 @@ exports.getMyStaffProfile = asyncHandler(async (req, res) => {
 });
 
 /**
+ * PATCH /staff/me/phone — Personel kendi kayıtlarına WhatsApp telefonu ekler
+ */
+exports.updateMyStaffPhone = asyncHandler(async (req, res) => {
+  const phone = String(req.body.phone || '').trim();
+  if (!phone) return error(res, 400, 'Telefon numarası gerekli.');
+
+  const staffRows = await Staff.find({
+    userId: req.user._id,
+    isActive: true,
+    canViewOwnReservations: true,
+  });
+
+  if (!staffRows.length) {
+    return error(res, 403, 'Personel kaydı bulunamadı veya randevu yetkisi yok.');
+  }
+
+  for (const row of staffRows) {
+    row.phone = phone;
+    await row.save();
+  }
+
+  const updated = await Staff.find({ userId: req.user._id, isActive: true })
+    .populate('businessId', 'name')
+    .sort({ name: 1 })
+    .lean();
+
+  return success(res, 200, updated, 'Telefon numaranız kaydedildi.');
+});
+
+/**
  * GET /staff/business/:businessId - List staff for a business
  */
 exports.getStaffByBusiness = asyncHandler(async (req, res) => {

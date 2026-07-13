@@ -11,7 +11,7 @@ const {
   formatDateTr,
 } = require('../services/whatsappReservationMessages');
 const {
-  resolveBusinessPhone,
+  resolveReservationNotifyPhone,
   resolveCustomerPhone,
 } = require('../services/whatsappReservationNotify');
 const { waLog } = require('../utils/whatsappLog');
@@ -141,6 +141,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   })
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
+    .populate('staffId', 'name title phone')
     .populate('customerId', 'firstName lastName phone')
     .sort({ date: 1, time: 1 })
     .lean();
@@ -172,7 +173,11 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     let anyAttempt = false;
 
     const customerPhone = await resolveCustomerPhone(customer, customerId);
-    const businessPhone = await resolveBusinessPhone(business);
+    const notifyTarget = await resolveReservationNotifyPhone({
+      staff: r.staffId,
+      business,
+    });
+    const notifyPhone = notifyTarget.phone;
 
     // Exactly ~24h before (customer-only) — ask RSVP once.
     if (in24hWindow && !r.reminders?.customerWhatsApp24hSentAt) {
@@ -309,19 +314,19 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
         serviceName: service?.name || 'Hizmet',
       });
       const res = await sendWhatsApp({
-        toPhone: businessPhone,
+        toPhone: notifyPhone,
         body: msg,
-        tag: `reservation:${r._id}:business:reminder`,
+        tag: `reservation:${r._id}:${notifyTarget.recipient}:reminder`,
       });
       sendAttempts.push({
         reservationId: String(r._id),
-        channel: 'business',
+        channel: notifyTarget.recipient,
         kind: 'reminder',
         ok: Boolean(res.ok),
         reason: res.reason || null,
         message: res.message ? String(res.message).slice(0, 200) : null,
         dryRun: Boolean(res.dryRun),
-        hasPhone: Boolean(businessPhone),
+        hasPhone: Boolean(notifyPhone),
       });
       if (res.ok) {
         updates['reminders.businessWhatsAppSentAt'] = new Date();
