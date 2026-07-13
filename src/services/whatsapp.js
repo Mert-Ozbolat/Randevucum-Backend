@@ -223,16 +223,89 @@ async function sendViaMetaCloud({ toE164, body, tag, interactive, template }) {
     };
   }
 
-  const messageId = json?.messages?.[0]?.id;
+  const firstMessage = json?.messages?.[0] || {};
+  const messageId = firstMessage.id || null;
+  const messageStatus = firstMessage.message_status
+    ? String(firstMessage.message_status).toLowerCase()
+    : null;
   const contactWaId = json?.contacts?.[0]?.wa_id;
   return {
     ok: true,
     provider: 'meta',
     messageId,
+    messageStatus,
     messageType,
     to: `+${to}`,
     contactWaId: contactWaId || null,
   };
+}
+
+function metaDeliveryHint(messageType, messageStatus) {
+  if (messageStatus && messageStatus !== 'accepted') {
+    return `Meta mesaj durumu: ${messageStatus}. WhatsApp Manager → Message logs kontrol edin.`;
+  }
+  return messageType === 'template'
+    ? 'Meta kuyruğa aldı. Teslimat webhook ile loglanır (📨 sent → 📬 delivered veya 🚫 failed). Mesajlar bağlı WhatsApp Business hattınızdan gelir.'
+    : 'Session (serbest metin): alıcı son 24 saatte size yazmadıysa Meta teslim ETMEZ. Onaylı şablon kullanın.';
+}
+
+async function sendViaMetaCloudResolved({ toE164, body, tag, interactive, template }) {
+  const recipient = await resolveMetaRecipientE164(toE164);
+  if (recipient.skipped) {
+    waLog('⏭️', 'Meta: WhatsApp Business hattına mesaj gönderilemez', {
+      tag,
+      to: toE164,
+      wabaPhone: recipient.wabaPhone,
+      hint: recipient.hint,
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: recipient.reason,
+      hint: recipient.hint,
+      wabaPhone: recipient.wabaPhone,
+    };
+  }
+  if (recipient.redirectedFrom) {
+    waLog('↪️', 'Bildirim alternatif numaraya yönlendirildi (WA hattı = alıcı)', {
+      tag,
+      from: recipient.redirectedFrom,
+      to: recipient.to,
+      wabaPhone: recipient.wabaPhone,
+    });
+  }
+
+  const res = await sendViaMetaCloud({
+    toE164: recipient.to,
+    body,
+    tag,
+    interactive,
+    template,
+  });
+
+  if (res.ok) {
+    waLog('✅', 'Meta mesaj kabul edildi (API — teslimat webhook ile doğrulanır)', {
+      tag,
+      messageId: res.messageId,
+      messageStatus: res.messageStatus || 'accepted',
+      messageType: res.messageType,
+      to: res.to || recipient.to,
+      contactWaId: res.contactWaId,
+      hint: metaDeliveryHint(res.messageType, res.messageStatus),
+    });
+  } else if (!res.skipped) {
+    waLog('❌', 'Meta gönderim hatası', {
+      tag,
+      to: recipient.to,
+      reason: res.reason,
+      message: res.message,
+      code: res.code,
+      errorSubcode: res.errorSubcode,
+      hint: res.hint,
+    });
+  }
+
+  return res;
 }
 
 /** Meta düz metin: WhatsApp markdown sadeleştir, max 4096 karakter */
@@ -393,10 +466,7 @@ async function sendWhatsAppInteractive({ toPhone, body, buttons, tag }) {
   };
 
   waLog('📤', 'Meta interactive gönderim', { tag, to });
-  const res = await sendViaMetaCloud({ toE164: to, tag, interactive });
-  if (res.ok) waLog('✅', 'Meta interactive gönderildi', { tag, messageId: res.messageId });
-  else waLog('❌', 'Meta interactive hata', { tag, message: res.message });
-  return res;
+  return sendViaMetaCloudResolved({ toE164: to, tag, interactive });
 }
 
 /**
@@ -472,7 +542,7 @@ async function sendWhatsAppTemplate({
     urlButtons: urlButtons?.length || 0,
     hasLocationHeader: Boolean(headerLocation),
   });
-  return sendViaMetaCloud({ toE164: to, tag, template });
+  return sendViaMetaCloudResolved({ toE164: to, tag, template });
 }
 
 /**
@@ -635,54 +705,7 @@ async function sendWhatsApp({ toPhone, body, tag }) {
   }
 
   if (provider === 'meta') {
-    const recipient = await resolveMetaRecipientE164(to);
-    if (recipient.skipped) {
-      waLog('⏭️', 'Meta: WhatsApp Business hattına mesaj gönderilemez', {
-        tag,
-        to,
-        wabaPhone: recipient.wabaPhone,
-        hint: recipient.hint,
-      });
-      return {
-        ok: false,
-        skipped: true,
-        reason: recipient.reason,
-        hint: recipient.hint,
-      };
-    }
-    if (recipient.redirectedFrom) {
-      waLog('↪️', 'İşletme bildirimi alternatif numaraya yönlendirildi (WA hattı = alıcı)', {
-        tag,
-        from: recipient.redirectedFrom,
-        to: recipient.to,
-        wabaPhone: recipient.wabaPhone,
-      });
-    }
-    const res = await sendViaMetaCloud({ toE164: recipient.to, body, tag });
-    if (res.ok) {
-      waLog('✅', 'Meta mesaj kabul edildi (API — henüz teslimat garantisi yok)', {
-        tag,
-        messageId: res.messageId,
-        messageType: res.messageType,
-        to: res.to || recipient.to,
-        contactWaId: res.contactWaId,
-        hint:
-          res.messageType === 'session_text'
-            ? 'Session (serbest metin): alıcı son 24 saatte size yazmadıysa Meta teslim ETMEZ. WHATSAPP_TEMPLATE_BOOKING_* şablonlarını ayarlayın. Teslimat için webhook loglarında sent/delivered/failed izleyin.'
-            : 'Teslimat durumu webhook ile loglanır (📨 sent → 📬 delivered veya 🚫 failed).',
-      });
-    } else if (!res.skipped) {
-      waLog('❌', 'Meta gönderim hatası', {
-        tag,
-        to,
-        reason: res.reason,
-        message: res.message,
-        code: res.code,
-        errorSubcode: res.errorSubcode,
-        hint: res.hint,
-      });
-    }
-    return res;
+    return sendViaMetaCloudResolved({ toE164: to, body, tag });
   }
 
   waLog('❌', 'Bilinmeyen WHATSAPP_PROVIDER', {

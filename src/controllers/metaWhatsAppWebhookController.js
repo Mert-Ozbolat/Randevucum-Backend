@@ -105,8 +105,18 @@ exports.metaIncoming = asyncHandler(async (req, res) => {
   }
 
   const statusCount = processMetaDeliveryWebhook(body);
-
   const messages = extractMetaIncomingMessages(body);
+
+  if (statusCount > 0 || messages.length > 0) {
+    waLog('📥', 'Meta webhook alındı', {
+      statusCount,
+      incomingMessages: messages.length,
+      hint:
+        statusCount === 0 && messages.length === 0
+          ? undefined
+          : 'Teslimat hatası varsa 🚫 failed logu görünür',
+    });
+  }
   const results = [];
 
   for (const msg of messages) {
