@@ -41,6 +41,13 @@ function metaStatusErrorHint(errors) {
   if (code === 131049 || subcode === 131049) {
     return 'Meta ekosistem kuralı — çok fazla pazarlama mesajı veya kalite puanı düşük olabilir.';
   }
+  if (code === 131042 || subcode === 131042 || /payment|billing|eligibility/i.test(title)) {
+    const href = first.href || '';
+    return `Meta ödeme yöntemi eksik veya geçersiz (131042). WhatsApp Manager → Billing → ödeme yöntemi ekleyin.${href ? ` ${href}` : ' https://business.facebook.com/billing_hub/'}`;
+  }
+  if (code === 141010 || /business verification/i.test(title)) {
+    return 'Meta işletme doğrulaması tamamlanmamış. Business Settings → Security Center → Business verification.';
+  }
   if (title) return String(title);
   return 'Meta teslimat hatası — WhatsApp Manager → Message logs bölümünü kontrol edin.';
 }

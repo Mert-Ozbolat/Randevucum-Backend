@@ -103,9 +103,11 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
 
 async function notifyBusinessRsvp(r, user, rsvp) {
   const business = r.businessId;
+  const customerPhone = user?.phone && String(user.phone).trim() ? String(user.phone).trim() : null;
   const notifyTarget = await resolveReservationNotifyPhone({
     staff: r.staffId,
     business,
+    customerPhone,
   });
   const notifyPhone = notifyTarget.phone;
   if (!notifyPhone) return;

@@ -1,7 +1,15 @@
 const Business = require('../models/Business');
 const User = require('../models/User');
 const Reservation = require('../models/Reservation');
-const { sendWhatsApp, sendWhatsAppTemplate, isEnabled: isWhatsAppEnabled, getProvider } = require('./whatsapp');
+const {
+  sendWhatsApp,
+  sendWhatsAppTemplate,
+  isEnabled: isWhatsAppEnabled,
+  getProvider,
+  normalizeE164Tr,
+  phonesMatch,
+  resolveMetaWabaPhoneE164,
+} = require('./whatsapp');
 const { RESERVATION_STATUS } = require('../config/constants');
 const { getActivePlanForBusiness } = require('../utils/subscriptionLimits');
 const {
@@ -34,23 +42,60 @@ function resolveStaffPhone(staff) {
   return direct || null;
 }
 
+function resolveBusinessNotificationPhone() {
+  return normalizeE164Tr(process.env.WHATSAPP_BUSINESS_NOTIFICATION_PHONE);
+}
+
 /**
- * Randevu bildirimi alıcısı: atanmış personelin telefonu; yoksa işletme telefonu.
+ * Randevu bildirimi alıcısı:
+ * 1) Atanmış personelin telefonu (müşteri numarasıyla aynı değilse)
+ * 2) WHATSAPP_BUSINESS_NOTIFICATION_PHONE (işletme WA hattı = alıcıysa veya personel=müşteri testi)
+ * 3) İşletme / sahip telefonu
  */
-async function resolveReservationNotifyPhone({ staff, business }) {
+async function resolveReservationNotifyPhone({ staff, business, customerPhone }) {
+  const staffName = staff?.name || staff?.title || '';
   const staffPhone = resolveStaffPhone(staff);
-  if (staffPhone) {
+  const businessPhone = await resolveBusinessPhone(business);
+  const altNotifyPhone = resolveBusinessNotificationPhone();
+  const wabaPhone = await resolveMetaWabaPhoneE164();
+
+  const pickNonWabaPhone = (phone) => {
+    if (!phone) return null;
+    if (wabaPhone && phonesMatch(phone, wabaPhone) && altNotifyPhone && !phonesMatch(altNotifyPhone, wabaPhone)) {
+      return altNotifyPhone;
+    }
+    return phone;
+  };
+
+  const customerNorm = customerPhone ? normalizeE164Tr(customerPhone) : null;
+  const staffMatchesCustomer = Boolean(
+    staffPhone && customerNorm && phonesMatch(staffPhone, customerNorm)
+  );
+
+  if (staffPhone && !staffMatchesCustomer) {
     return {
-      phone: staffPhone,
+      phone: pickNonWabaPhone(staffPhone),
       recipient: 'staff',
-      staffName: staff?.name || staff?.title || '',
+      staffName,
+      routedVia: 'staff_phone',
     };
   }
-  const businessPhone = await resolveBusinessPhone(business);
+
+  if (staffPhone && staffMatchesCustomer) {
+    waLog('↪️', 'Personel telefonu müşteri ile aynı — işletme bildirim hattı kullanılıyor', {
+      staffName: staffName || '(personel)',
+      hint: 'Canlıda personel kendi iş telefonunu kullanmalı; testte aynı numara olunca işletme hattına düşer.',
+    });
+  }
+
+  const businessTarget = pickNonWabaPhone(altNotifyPhone || businessPhone);
   return {
-    phone: businessPhone,
-    recipient: 'business',
-    staffName: staff?.name || staff?.title || '',
+    phone: businessTarget,
+    recipient: staffPhone && staffMatchesCustomer ? 'business_fallback' : 'business',
+    staffName,
+    routedVia: altNotifyPhone && phonesMatch(businessTarget, altNotifyPhone)
+      ? 'WHATSAPP_BUSINESS_NOTIFICATION_PHONE'
+      : 'business_phone',
   };
 }
 
@@ -279,7 +324,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     (customerPhoneHint && String(customerPhoneHint).trim()) ||
     (await resolveCustomerPhone(customer, r.customerId?._id || r.customerId));
 
-  const notifyTarget = await resolveReservationNotifyPhone({ staff, business });
+  const notifyTarget = await resolveReservationNotifyPhone({ staff, business, customerPhone });
   const notifyPhone = notifyTarget.phone;
   const customerName = customer
     ? `${customer.firstName || ''} ${customer.lastName || ''}`.trim()
@@ -329,6 +374,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     reservationId: String(r._id),
     isPro,
     notifyRecipient: notifyTarget.recipient,
+    notifyRoute: notifyTarget.routedVia,
     notifyPhone: notifyPhone ? '***' : null,
     businessResult: results.business,
   });

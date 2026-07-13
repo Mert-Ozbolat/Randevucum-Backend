@@ -176,6 +176,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     const notifyTarget = await resolveReservationNotifyPhone({
       staff: r.staffId,
       business,
+      customerPhone,
     });
     const notifyPhone = notifyTarget.phone;
 

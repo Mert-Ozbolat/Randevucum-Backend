@@ -65,8 +65,9 @@ async function runMetaWhatsAppStartupHealthCheck() {
         entities: limited,
         actions: [
           'Meta Business Settings → Security Center → Business verification tamamlayın',
-          'WhatsApp Manager → Phone numbers → Display name (Nexysoft/Randevucum) onayını bekleyin',
-          'WhatsApp Manager → Account tools → Billing → ödeme yöntemi ekleyin',
+          'WhatsApp Manager → Phone numbers → Display name onayını bekleyin',
+          'WhatsApp Manager → Billing → ödeme yöntemi ekleyin (hata 131042)',
+          'https://business.facebook.com/billing_hub/',
         ],
       });
     }
