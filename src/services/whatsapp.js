@@ -334,7 +334,7 @@ function metaErrorHint(err, to) {
     return `Alıcı (${to}) büyük ihtimalle Meta WhatsApp Business hattınızla aynı numara — API kendi numarasına mesaj gönderemez. İşletme profilinde farklı bir bildirim telefonu kullanın veya WHATSAPP_BUSINESS_NOTIFICATION_PHONE ayarlayın.`;
   }
   if (code === 132001) {
-    return 'Şablon adı veya dil (tr) Meta panelinde onaylı şablonla eşleşmiyor. WhatsApp Manager → Message templates kontrol edin.';
+    return 'Şablon bu dilde gönderilemiyor: ya AD/dil eşleşmiyor ya da henüz APPROVED değil (PENDING iken Meta 132001 döner). WhatsApp Manager → Message templates.';
   }
   if (code === 132018) {
     const details = String(err?.error_data?.details || err?.message || '').toLowerCase();

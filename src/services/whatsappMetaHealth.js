@@ -29,6 +29,7 @@ function summarizeHealthEntities(healthStatus) {
  * Meta WhatsApp başlangıç teşhisi:
  * - WABA → App aboneliği (webhook + teslimat için zorunlu)
  * - health_status uyarıları (işletme doğrulama, display name vb.)
+ * - Gönderimde kullanılan şablonların APPROVED olup olmadığı
  */
 async function runMetaWhatsAppStartupHealthCheck() {
   if (!isMetaWhatsAppEnabled()) return { skipped: true, reason: 'whatsapp_not_meta' };
@@ -75,6 +76,74 @@ async function runMetaWhatsAppStartupHealthCheck() {
     if (!wabaId) {
       waLog('⚠️', 'Meta WABA ID health_status içinde bulunamadı', { entitySummary });
       return { ok: true, wabaId: null, entitySummary };
+    }
+
+    const configuredTemplates = [
+      process.env.WHATSAPP_TEMPLATE_BOOKING_BUSINESS_NAME,
+      process.env.WHATSAPP_TEMPLATE_BOOKING_CUSTOMER_NAME,
+      process.env.WHATSAPP_TEMPLATE_RSVP_24H_NAME,
+      process.env.WHATSAPP_TEMPLATE_RSVP_1H_NAME,
+      process.env.WHATSAPP_TEMPLATE_RSVP_NAME,
+      process.env.WHATSAPP_TEMPLATE_RSVP_BUSINESS_NAME,
+    ]
+      .map((n) => String(n || '').trim())
+      .filter(Boolean);
+    const expectedLang = process.env.WHATSAPP_TEMPLATE_LANG || 'tr';
+
+    if (configuredTemplates.length) {
+      const tRes = await fetch(
+        `https://graph.facebook.com/${version}/${wabaId}/message_templates?limit=100&fields=name,status,language,category,rejected_reason`,
+        { headers }
+      );
+      const tJson = await tRes.json().catch(() => ({}));
+      const remote = Array.isArray(tJson?.data) ? tJson.data : [];
+      if (tRes.ok) {
+        const issues = [];
+        for (const name of [...new Set(configuredTemplates)]) {
+          const matches = remote.filter((t) => t.name === name);
+          if (!matches.length) {
+            issues.push({ name, problem: 'not_found', hint: 'WhatsApp Manager’da şablon adını kontrol edin' });
+            continue;
+          }
+          const langMatch = matches.find((t) => t.language === expectedLang) || matches[0];
+          if (langMatch.language !== expectedLang) {
+            issues.push({
+              name,
+              problem: 'language_mismatch',
+              remoteLanguage: langMatch.language,
+              expectedLang,
+              status: langMatch.status,
+            });
+          } else if (langMatch.status !== 'APPROVED') {
+            issues.push({
+              name,
+              problem: 'not_approved',
+              status: langMatch.status,
+              language: langMatch.language,
+              category: langMatch.category,
+              rejectedReason: langMatch.rejected_reason,
+              hint:
+                langMatch.status === 'PENDING'
+                  ? 'Meta onayı bekleniyor — APPROVED olmadan API 132001 döner'
+                  : 'Şablon APPROVED değil; reddedildiyse içeriği düzeltip yeniden gönderin',
+            });
+          }
+        }
+        if (issues.length) {
+          waLog('❌', 'Meta şablonları gönderime hazır değil — WhatsApp mesajları başarısız olur', {
+            expectedLang,
+            issues,
+            action: 'WhatsApp Manager → Message templates → her şablon APPROVED olmalı',
+          });
+        } else {
+          waLog('✅', 'Meta randevu şablonları APPROVED', {
+            templates: [...new Set(configuredTemplates)],
+            language: expectedLang,
+          });
+        }
+      } else {
+        waLog('⚠️', 'Meta şablon listesi alınamadı', { error: tJson?.error?.message });
+      }
     }
 
     const subsRes = await fetch(
