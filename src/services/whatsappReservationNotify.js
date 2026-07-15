@@ -72,7 +72,8 @@ function buildNotifyTarget(phone, recipient, routedVia, staffName) {
 /**
  * Randevu bildirimi alıcıları:
  * - Personel yok (Farketmez): yalnızca işletme hattı
- * - Personel var + telefonu var: personele + (farklıysa) işletme hattına kopya
+ * - Personel var + telefonu var: yalnızca o personele
+ * - Personel var + telefonu yok: yalnızca işletme hattı
  * - Personel telefonu = müşteri telefonu: yalnızca işletme hattı
  */
 async function resolveReservationNotifyTargets({ staff, business, customerPhone }) {
@@ -115,23 +116,9 @@ async function resolveReservationNotifyTargets({ staff, business, customerPhone 
 
   if (staffAssigned && staffPhone) {
     const staffTarget = pickNonWabaPhone(staffPhone);
-    const targets = [];
     if (staffTarget) {
-      targets.push(buildNotifyTarget(staffTarget, 'staff', 'staff_phone', staffName));
+      return [buildNotifyTarget(staffTarget, 'staff', 'staff_phone', staffName)];
     }
-    if (businessTarget && staffTarget && !phonesMatch(businessTarget, staffTarget)) {
-      targets.push(
-        buildNotifyTarget(
-          businessTarget,
-          'business_copy',
-          altNotifyPhone && phonesMatch(businessTarget, altNotifyPhone)
-            ? 'WHATSAPP_BUSINESS_NOTIFICATION_PHONE'
-            : 'business_phone',
-          staffName
-        )
-      );
-    }
-    if (targets.length > 0) return targets;
   }
 
   if (staffAssigned && !staffPhone) {
@@ -361,8 +348,8 @@ async function sendCustomerBookingWhatsApp({
 
 /**
  * Randevu oluşturulunca anlık WhatsApp:
- * - Atanan personel (telefonu varsa); yoksa işletme telefonu
- * - Müşteri: yalnızca PRO işletmeler
+ * - Personel/işletme bildirimi: yalnızca PRO işletmeler
+ * - Müşteri mesajı: her zaman (PRO gerekmez)
  */
 async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint } = {}) {
   waLog('🆕', 'ANLIK randevu bildirimi başladı (POST /reservations)', {
@@ -403,8 +390,13 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
   const results = { customer: null, business: null, businessTargets: [] };
   const isPro = businessId ? await isBusinessPro(businessId) : false;
 
-  // Personel / işletme — anlık (PRO şartı yok)
-  if (r.reminders?.businessWhatsAppBookingSentAt) {
+  // Personel / işletme — anlık (yalnızca PRO)
+  if (!isPro) {
+    results.business = { ok: true, skipped: true, reason: 'not_pro_business' };
+    waLog('⏭️', 'Personel/işletme anlık bildirimi atlandı — PRO değil', {
+      reservationId: String(r._id),
+    });
+  } else if (r.reminders?.businessWhatsAppBookingSentAt) {
     results.business = { ok: true, skipped: true, reason: 'already_sent' };
     waLog('⏭️', 'Personel/işletme anlık bildirimi daha önce gönderilmiş', { reservationId: String(r._id) });
   } else if (!notifyTargets.length) {
@@ -455,11 +447,9 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
     businessResult: results.business,
   });
 
-  // Müşteri — randevu oluşturulunca (yalnızca PRO işletmeler)
+  // Müşteri — randevu oluşturulunca (PRO gerekmez; müşteri paket almaz)
   if (r.reminders?.customerWhatsAppBookingSentAt) {
     results.customer = { ok: true, skipped: true, reason: 'already_sent' };
-  } else if (!isPro) {
-    results.customer = { ok: true, skipped: true, reason: 'not_pro_business' };
   } else if (!customerPhone) {
     results.customer = { ok: false, skipped: true, reason: 'no_customer_phone' };
   } else {
@@ -498,7 +488,7 @@ async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint
 
 /**
  * İşletme randevuyu onayladıktan sonra müşteriye WhatsApp:
- * - Yalnızca PRO işletmeler
+ * - PRO gerekmez (müşteriye her zaman)
  * - Aynı randevu için bir kez
  */
 async function sendReservationApprovedWhatsApp(reservationId) {
@@ -518,16 +508,10 @@ async function sendReservationApprovedWhatsApp(reservationId) {
     return { ok: true, skipped: true, reason: 'not_approved' };
   }
 
-  const businessId = r.businessId?._id || r.businessId;
   const business = r.businessId;
   const customer = r.customerId;
   const service = r.serviceId;
   const dateKey = toYmd(r.date);
-
-  const isPro = businessId ? await isBusinessPro(businessId) : false;
-  if (!isPro) {
-    return { ok: true, skipped: true, reason: 'not_pro_business' };
-  }
 
   if (r.reminders?.customerWhatsAppBookingSentAt) {
     return { ok: true, skipped: true, reason: 'already_sent' };

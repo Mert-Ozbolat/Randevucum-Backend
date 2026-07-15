@@ -72,7 +72,7 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
     })
       .populate('businessId', 'name phone ownerId')
       .populate('serviceId', 'name')
-      .populate('staffId', 'name title phone')
+      .populate('staffId', 'name title phone userId')
       .lean();
     if (!r) return null;
     const startAt = appointmentStartUtcFromStoredDay(r.date, r.time);
@@ -86,7 +86,7 @@ async function findApprovedReservationForRsvp({ userId, reservationId, code, now
   })
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
-    .populate('staffId', 'name title phone')
+    .populate('staffId', 'name title phone userId')
     .lean();
 
   const match = candidates

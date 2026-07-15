@@ -110,26 +110,15 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     .select('businessId')
     .lean();
 
-  const proBusinessIds = proSubs.map((s) => s.businessId);
-  if (!proBusinessIds.length) {
-    waLog(
-      '⏰',
-      'CRON hatırlatma — PRO işletme yok (reason: no_pro_businesses). Bu ANLIK yeni randevu bildirimi DEĞİL.',
-      {
-        hint: 'Anlık bildirim için konsolda 🆕 [WA] veya 🔔 [WA] arayın (randevu oluşturulunca)',
-        proPriceIdsConfigured: proPriceIds.length,
-      }
-    );
-    return { ok: true, scanned: 0, sent: 0, skipped: 0, reason: 'no_pro_businesses' };
-  }
+  const proBusinessIdSet = new Set(proSubs.map((s) => String(s.businessId)));
 
   waLog('⏰', 'CRON hatırlatma job başladı (yaklaşan randevular)', {
-    proBusinessCount: proBusinessIds.length,
+    proBusinessCount: proBusinessIdSet.size,
     lookaheadMinutes,
+    note: 'Müşteri hatırlatması tüm onaylı randevularda; personel/işletme hatırlatması yalnızca PRO',
   });
 
   const candidates = await Reservation.find({
-    businessId: { $in: proBusinessIds },
     // Reminders should be for confirmed appointments only.
     status: 'approved',
     $or: [
@@ -141,7 +130,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
   })
     .populate('businessId', 'name phone ownerId')
     .populate('serviceId', 'name')
-    .populate('staffId', 'name title phone')
+    .populate('staffId', 'name title phone userId')
     .populate('customerId', 'firstName lastName phone')
     .sort({ date: 1, time: 1 })
     .lean();
@@ -168,6 +157,8 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     const service = r.serviceId;
     const dateKey = toYmd(r.date);
     const customerId = customer?._id || r.customerId;
+    const businessIdKey = String(business?._id || r.businessId || '');
+    const isProBusiness = proBusinessIdSet.has(businessIdKey);
 
     const updates = {};
     let anyAttempt = false;
@@ -180,7 +171,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     });
     const notifyPhone = notifyTarget.phone;
 
-    // Exactly ~24h before (customer-only) — ask RSVP once.
+    // Exactly ~24h before (customer-only) — ask RSVP once. PRO gerekmez.
     if (in24hWindow && !r.reminders?.customerWhatsApp24hSentAt) {
       anyAttempt = true;
       const rsvpCode = String(r._id).slice(-6).toUpperCase();
@@ -299,9 +290,22 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
       }
     }
 
+    // Personel/işletme hatırlatması — yalnızca PRO
     if (!r.reminders?.businessWhatsAppSentAt) {
       if (!inSoonWindow) {
         // Business reminder is for near-term window only.
+      } else if (!isProBusiness) {
+        anyAttempt = true;
+        updates['reminders.businessWhatsAppSentAt'] = new Date();
+        sendAttempts.push({
+          reservationId: String(r._id),
+          channel: 'business',
+          kind: 'reminder',
+          ok: true,
+          skipped: true,
+          reason: 'not_pro_business',
+          hasPhone: Boolean(notifyPhone),
+        });
       } else {
       anyAttempt = true;
       const customerName = customer
@@ -353,7 +357,7 @@ async function runWhatsAppReminders({ now = new Date() } = {}) {
     rule: {
       lookaheadMinutes,
       description:
-        'Randevu başlangıcı şimdi ile şimdi+lookahead arasındaysa müşteri ve işletmeye hatırlatma (daha önce gönderilmediyse).',
+        'Müşteri hatırlatması her zaman; personel/işletme hatırlatması yalnızca PRO (yaklaşan pencere).',
     },
   };
 }
