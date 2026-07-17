@@ -254,18 +254,20 @@ async function sendBusinessBookingWhatsApp({
       templateName,
       headerLocation: headerLocation || undefined,
       bodyParams: [
+        customerName || '—',
+        customerPhone || '—',
+        staffName || '—',
         formatDateTr(dateKey),
         time,
         serviceName || 'Hizmet',
-        customerName || '—',
-        customerPhone || '—',
       ],
       bodyParamNames: [
+        'customer_name',
+        'customer_phone',
+        'staff_name',
         'appointment_date',
         'appointment_time',
         'service_name',
-        'customer_name',
-        'customer_phone',
       ],
       urlButtons: panelPathSuffix
         ? [

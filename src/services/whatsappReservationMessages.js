@@ -183,25 +183,23 @@ function buildBusinessBookingMessage({
   panelUrl,
 }) {
   const lines = [
-    `${waBold('Yeni randevunuz var')} 🔔`,
+    `${waBold('Yeni Randevu Oluşturuldu')} 📅`,
     '',
-    'Yeni bir randevu alındı.',
+    'İşletmeniz için yeni bir randevu alındı.',
     '',
-    waLine('Tarih', formatDateTr(dateKey)),
-    waLine('Saat', time),
-    waLine('Hizmet', serviceName || 'Hizmet'),
+    `👤 Müşteri: ${waEscape(customerName || '—')}`,
+    `📞 Telefon: ${waEscape(customerPhone || '—')}`,
+    `👨‍💼 Personel: ${waEscape(staffName || '—')}`,
+    '',
+    `📅 Tarih: ${waEscape(formatDateTr(dateKey))}`,
+    `🕒 Saat: ${waEscape(time)}`,
+    `💼 Hizmet: ${waEscape(serviceName || 'Hizmet')}`,
+    '',
+    'Randevu detaylarını yönetim panelinizden görüntüleyebilirsiniz.',
   ];
-  if (staffName && String(staffName).trim()) {
-    lines.push(waLine('Personel', staffName));
-  }
-  lines.push(waLine('Müşteri', customerName || '—'));
-  if (customerPhone && String(customerPhone).trim()) {
-    lines.push(waLine('Müşteri telefon', customerPhone));
-  }
   if (panelUrl) {
     lines.push('', `👉 ${waEscape(panelUrl)}`);
   }
-  lines.push('', 'Bu mesaj randevu oluşturulur oluşturulmaz gönderilmiştir.');
   return lines.join('\n');
 }
 
