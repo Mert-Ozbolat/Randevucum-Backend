@@ -31,16 +31,26 @@ function extractRsvpPayloadFromMessage(msg) {
 
   if (type === 'interactive') {
     const interactive = msg.interactive || {};
-    if (interactive.type === 'button_reply' && interactive.button_reply?.id) {
-      return String(interactive.button_reply.id);
+    if (interactive.type === 'button_reply') {
+      const id = interactive.button_reply?.id;
+      const title = interactive.button_reply?.title;
+      if (id) return String(id);
+      if (title) return String(title);
     }
-    if (interactive.type === 'list_reply' && interactive.list_reply?.id) {
-      return String(interactive.list_reply.id);
+    if (interactive.type === 'list_reply') {
+      const id = interactive.list_reply?.id;
+      const title = interactive.list_reply?.title;
+      if (id) return String(id);
+      if (title) return String(title);
     }
   }
 
-  if (type === 'button' && msg.button?.payload) {
-    return String(msg.button.payload);
+  // Template quick-reply: payload öncelikli; yoksa buton metni (Evet, geleceğim)
+  if (type === 'button') {
+    const payload = msg.button?.payload;
+    const text = msg.button?.text;
+    if (payload) return String(payload);
+    if (text) return String(text);
   }
 
   if (type === 'text' && msg.text?.body) {
@@ -123,10 +133,21 @@ exports.metaIncoming = asyncHandler(async (req, res) => {
     const fromPhone = msg.from ? String(msg.from) : '';
     const payload = extractRsvpPayloadFromMessage(msg);
     if (!fromPhone || !payload) {
+      waLog('↪️', 'Meta mesaj RSVP olarak işlenemedi', {
+        type: msg.type,
+        hasFrom: Boolean(fromPhone),
+        buttonPayload: msg.button?.payload ? '(var)' : null,
+        buttonText: msg.button?.text || null,
+        interactiveType: msg.interactive?.type || null,
+      });
       results.push({ ignored: true, reason: 'not_actionable', type: msg.type });
       continue;
     }
 
+    waLog('📥', 'Meta RSVP adayı', {
+      type: msg.type,
+      payloadPreview: String(payload).slice(0, 80),
+    });
     const result = await processIncomingRsvp({ fromPhone, payload });
     results.push(result);
   }
