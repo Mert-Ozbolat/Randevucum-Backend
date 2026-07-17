@@ -348,7 +348,7 @@ async function sendCustomerBookingWhatsApp({
 
 /**
  * Randevu oluşturulunca anlık WhatsApp:
- * - Personel/işletme bildirimi: yalnızca PRO işletmeler
+ * - Personel/işletme bildirimi: yalnızca PRO işletmeler (seçilen çalışana)
  * - Müşteri mesajı: her zaman (PRO gerekmez)
  */
 async function sendReservationBookingWhatsApp(reservationId, { customerPhoneHint } = {}) {
